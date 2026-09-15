@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react'
 import { useApp } from '../state/AppContext'
 import { friendlyError } from '../lib/api'
+import { formatHM, monthHours, spanMinutes, spanOf } from '../lib/careHours'
 import type { CareDraft } from '../lib/types'
 import {
   CONTENT_KEYS, LISTEN_UNSUPPORTED, canListen, fillCareByVoice, hasContent, startListening,
@@ -13,12 +14,14 @@ type Props = {
   onSubmit: (draft: CareDraft) => Promise<void>
   onCancel: () => void
   onDirtyChange: (dirty: boolean) => void
+  /** 고치는 중인 일지 (90시간 합계에서 원래 시간을 빼고 새 시간으로 계산) */
+  editingId?: string
 }
 
 type Voice = { phase: 'idle' } | { phase: 'listening'; text: string } | { phase: 'thinking' }
 
-export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, onDirtyChange }: Props) {
-  const { aiConnected } = useApp()
+export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, onDirtyChange, editingId }: Props) {
+  const { aiConnected, careLogs, year, month } = useApp()
   const [start] = useState(initial)
   const [d, setD] = useState(initial)
   const [busy, setBusy] = useState(false)
@@ -49,6 +52,13 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
 
   const filled = hasContent(d)
   const voiceBusy = voice.phase !== 'idle'
+
+  // 90시간 미리 보기 — 지금 불러온 달의 일지일 때만 달 합계를 계산한다
+  const thisSpan = spanOf(d.log_date, d.start_time, d.end_time)
+  const [logYear, logMonth] = d.log_date.split('-').map(Number)
+  const projected = thisSpan && logYear === year && logMonth === month
+    ? monthHours(careLogs.filter((c) => c.id !== editingId), [thisSpan])
+    : null
 
   /** 들은 글을 칸에 넣는다 (칸이 비었으면 새로 쓰기, 내용이 있으면 보완하기) */
   const organize = async (transcript: string, mode: VoiceMode) => {
@@ -198,6 +208,17 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
           <input id="f-end" type="time" {...bind('end_time')} />
         </div>
       </div>
+
+      {thisSpan && (
+        <p className={`hours-preview${projected && projected.over > 0 ? ' over' : ''}`} aria-live="polite">
+          이 일지 <b>{formatHM(spanMinutes(thisSpan))}</b>
+          {projected && (projected.over > 0 ? (
+            <> · 저장하면 {logMonth}월 {formatHM(projected.minutes)} — <b>90시간을 {formatHM(projected.over)} 넘습니다</b></>
+          ) : (
+            <> · 저장하면 {logMonth}월 {formatHM(projected.minutes)} · 90시간까지 <b>{formatHM(projected.remaining)} 남음</b></>
+          ))}
+        </p>
+      )}
 
       <div className="field">
         <label htmlFor="f-client">대상 · 장소 <span className="opt">선택</span></label>

@@ -123,6 +123,7 @@ export default function DayModal({
       {mode.kind === 'care' && (
         <EntryForm
           key={mode.log?.id ?? 'new-care'}
+          editingId={mode.log?.id}
           initial={mode.log ? draftFromLog(mode.log) : emptyCare(date)}
           submitLabel={mode.log ? '고친 내용 저장' : '저장'}
           onSubmit={submitCare}

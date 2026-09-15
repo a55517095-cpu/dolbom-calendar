@@ -31,7 +31,7 @@ export type DataSource = {
 }
 
 const ME: Member = {
-  id: 'demo-member', auth_user_id: 'demo-user', login_code: 'demo', name: '김태순', role: 'member', active: true,
+  id: 'demo-member', auth_user_id: 'demo-user', login_code: 'demo', name: '권희', role: 'member', active: true,
 }
 
 export const demoSession = {

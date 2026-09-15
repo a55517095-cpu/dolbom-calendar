@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { supabase, emailForLoginCode, passwordForPin, OWNER_NAME } from '../lib/supabase'
+import { supabase, emailForLoginCode, passwordForPin, DISPLAY_NAME, OWNER_NAME } from '../lib/supabase'
 import { fetchPublicMemberByName, friendlyError } from '../lib/api'
 import type { PublicMember } from '../lib/types'
 import { Notice, Spinner } from '../components/ui'
@@ -75,7 +75,7 @@ export default function Login() {
           </>
         ) : (
           <Notice kind="error">
-            해설사 근무표 명단에서 <b>{OWNER_NAME}</b> 님을 찾을 수 없습니다. 근무표 관리자에게 확인해 주세요.
+            해설사 근무표 명단에서 이 일지를 쓸 분을 찾을 수 없습니다. 근무표 관리자에게 확인해 주세요.
           </Notice>
         )}
       </div>
@@ -86,7 +86,7 @@ export default function Login() {
     <div className="login">
       <div className="login-title">
         <span className="eyebrow">CARE · WORK JOURNAL</span>
-        <h1>{person.name} 님</h1>
+        <h1>{DISPLAY_NAME} 님</h1>
         <p className="sub">해설사 근무표와 같은 비밀번호 4자리를 눌러주세요</p>
       </div>
 

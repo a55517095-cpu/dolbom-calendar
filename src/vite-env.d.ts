@@ -7,6 +7,7 @@ interface ImportMetaEnv {
   readonly VITE_PIN_PEPPER?: string
   readonly VITE_SCHEDULE_URL?: string
   readonly VITE_OWNER_NAME?: string
+  readonly VITE_DISPLAY_NAME?: string
   readonly VITE_SHEET_API_URL?: string
 }
 

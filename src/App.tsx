@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import FilterBar from './components/FilterBar'
 import Calendar from './components/Calendar'
 import MonthList from './components/MonthList'
+import CareHours from './components/CareHours'
 import DayModal, { type Compose } from './components/DayModal'
 import SettingsModal from './components/SettingsModal'
 import MenuEditor from './components/MenuEditor'
@@ -12,6 +13,7 @@ import { currentYearMonth, daysInMonth, todayISO } from './lib/date'
 import { CARE, EVENT, WORK } from './lib/menus'
 import { DEMO, resetDemo } from './lib/demo'
 import { readStored, writeStored } from './lib/storage'
+import { DISPLAY_NAME } from './lib/supabase'
 
 const HIDDEN_KEY = 'care-cal-hidden-menus'
 
@@ -138,7 +140,7 @@ export default function App() {
           <h1>돌봄 근무일지</h1>
         </div>
         <div className="mast-side">
-          <span className="who">{me.name} 님</span>
+          <span className="who">{DISPLAY_NAME} 님</span>
           <button className="pill-btn" onClick={() => setSettingsOpen(true)}>설정</button>
         </div>
       </header>
@@ -174,6 +176,8 @@ export default function App() {
       )}
       {error && <Notice kind="error">{error}</Notice>}
       {allHidden && <Notice kind="info">보기를 모두 껐습니다. 위에서 보고 싶은 메뉴를 눌러주세요.</Notice>}
+
+      {!sheetMissing && <CareHours month={month} logs={careLogs} />}
 
       <Calendar
         year={year}

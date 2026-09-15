@@ -23,5 +23,8 @@ export const passwordForPin = (pin: string) => `${pin}${PIN_PEPPER}`
 /** 이 일지를 쓰는 사람 (해설사 근무표 명단의 이름과 똑같이) */
 export const OWNER_NAME = import.meta.env.VITE_OWNER_NAME || '김태순'
 
+/** 화면에 보이는 이름 (명단에서 찾는 이름 OWNER_NAME 과 따로 둔다) */
+export const DISPLAY_NAME = import.meta.env.VITE_DISPLAY_NAME || '권희'
+
 export const SCHEDULE_URL =
   import.meta.env.VITE_SCHEDULE_URL ?? 'https://haeseolsa-schedule.vercel.app/'

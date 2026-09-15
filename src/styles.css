@@ -421,6 +421,33 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
 .c-special b { display: block; color: var(--flag); font-size: .64rem; letter-spacing: .08em; }
 .c-special p { margin: 1px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* ─── 이 달 돌봄 시간 (월 90시간) ─────────────────────────────────────── */
+
+.care-hours {
+  --tone: var(--care);
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--rule-strong);
+  border-left: 5px solid var(--tone);
+  border-radius: var(--radius);
+  background: var(--sheet);
+}
+.care-hours.near { --tone: #b7791f; }
+.care-hours.over { --tone: var(--flag); border-color: #e9b39c; border-left-color: var(--tone); background: var(--flag-soft); }
+.ch-main { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+.ch-label { color: var(--ink-soft); font-size: .92rem; font-weight: 700; }
+.ch-big { color: var(--tone); font-family: var(--serif); font-size: clamp(1.6rem, 5vw, 2.2rem); font-weight: 700; line-height: 1.15; }
+.ch-bar { height: 10px; overflow: hidden; border-radius: 999px; background: var(--paper-deep); }
+.ch-bar span { display: block; height: 100%; border-radius: inherit; background: var(--tone); transition: width .3s; }
+.ch-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--ink-soft); font-size: .88rem; }
+.ch-meta b { color: var(--ink); }
+.ch-warn { color: var(--flag-ink); font-weight: 700; }
+.ch-note { color: var(--ink-faint); }
+.hours-preview { margin: -4px 0 0; color: var(--care-ink); font-size: .9rem; }
+.hours-preview.over { color: var(--flag-ink); }
+
 .hint { margin: 10px 2px 0; color: var(--ink-faint); font-size: .85rem; }
 
 .sr-only {

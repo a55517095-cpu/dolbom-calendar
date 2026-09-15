@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useApp } from '../state/AppContext'
-import { SCHEDULE_URL } from '../lib/supabase'
+import { DISPLAY_NAME, SCHEDULE_URL } from '../lib/supabase'
 import {
   fetchAiStatus, friendlyError, looksLikeSheetUrl, pingSheet, removeAiKey, saveAiKey,
   type AiStatus, type SheetStatus,
@@ -65,7 +65,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title="설정" subtitle={me ? `${me.name} 님으로 로그인됨` : undefined} onClose={onClose}>
+    <Modal title="설정" subtitle={me ? `${DISPLAY_NAME} 님으로 로그인됨` : undefined} onClose={onClose}>
       <div className="form">
         <div className="field">
           <label htmlFor="sheet-url">구글시트 연결 주소</label>
@@ -104,7 +104,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
           <p className="help">구글시트 스크립트 속성 <b>ALLOWED_EMAIL</b> 에 이 값을 넣습니다.</p>
         </div>
 
-        <p className="help">근무는 해설사 근무표의 {me?.name} 님 근무를 실시간으로 가져옵니다.</p>
+        <p className="help">근무는 해설사 근무표의 {DISPLAY_NAME} 님 근무를 실시간으로 가져옵니다.</p>
         <a className="btn ghost block" href={SCHEDULE_URL} target="_blank" rel="noreferrer">
           해설사 근무표 앱 열기 ↗
         </a>
