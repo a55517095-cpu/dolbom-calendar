@@ -1,0 +1,18 @@
+node_modules
+dist
+.env
+.env.local
+*.local
+.DS_Store
+*.tsbuildinfo
+
+# 앱 서명키 - 저장소에 올리지 않는다 (잃어버리면 앱을 덮어 설치할 수 없으니 따로 백업)
+release-key/
+
+# 안드로이드 빌드 결과물
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+*.apk
+*.aab
