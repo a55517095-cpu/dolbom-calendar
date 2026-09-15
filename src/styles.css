@@ -834,8 +834,8 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
 .form-actions { display: flex; gap: 10px; }
 .form-actions .btn { flex: 1; }
 
-/* 말로 채우기 */
-.voice-bar {
+/* AI 로 정리 (받아쓴 글을 칸별로 나누기) */
+.ai-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -845,37 +845,11 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
   border-radius: var(--radius);
   background: var(--paper);
 }
-.btn.voice { gap: 6px; border-color: var(--care); background: var(--sheet); color: var(--care-ink); font-weight: 700; }
-.btn.voice:hover { background: var(--care-soft); }
-.btn.voice svg { flex: none; width: 18px; height: 18px; }
-.btn.voice.on { border-color: var(--flag); background: var(--flag); color: #fff; animation: voice-pulse 1.4s ease-in-out infinite; }
-@keyframes voice-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--flag) 45%, transparent); }
-  50% { box-shadow: 0 0 0 8px transparent; }
-}
-@media (prefers-reduced-motion: reduce) { .btn.voice.on { animation: none; } }
-.voice-bar .help, .voice-live, .voice-note { flex-basis: 100%; margin: 0; }
-.voice-live {
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--sheet);
-  font-size: .95rem;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-.voice-note { color: var(--care-ink); font-size: .86rem; font-weight: 600; }
-.voice-tip {
-  flex-basis: 100%;
-  margin: 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--care) 10%, transparent);
-  color: var(--ink);
-  font-size: .84rem;
-  line-height: 1.5;
-}
-.organize-row { display: flex; justify-content: flex-end; margin-top: 6px; }
-.organize-row .btn { max-width: 100%; white-space: normal; text-align: center; }
+.ai-bar .help, .ai-note { flex-basis: 100%; margin: 0; }
+.ai-note { color: var(--care-ink); font-size: .86rem; font-weight: 600; }
+.organize-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; }
+.organize-row .btn { flex: none; }
+.organize-row .help { margin: 0; }
 .help.steps { margin: 10px 0 4px; padding-left: 1.3em; }
 .help.steps li { margin: 3px 0; }
 
