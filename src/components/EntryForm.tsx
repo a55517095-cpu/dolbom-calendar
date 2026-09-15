@@ -61,13 +61,15 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
     : null
 
   /** 들은 글을 칸에 넣는다 (칸이 비었으면 새로 쓰기, 내용이 있으면 보완하기) */
-  const organize = async (transcript: string, mode: VoiceMode) => {
+  const organize = async (transcript: string, mode: VoiceMode, why?: string) => {
     listening.current = null
     if (!transcript.trim()) {
       setVoice({ phase: 'idle' })
-      setErr('말소리가 들리지 않았습니다. 마이크 버튼을 다시 누르고 말해 주세요.')
+      setErr(`말소리가 들리지 않았습니다. 마이크 버튼을 다시 누르고 말해 주세요.${why ? ` (${why})` : ''}`)
       return
     }
+    // 「말하기 끝」을 누르기 전에 저절로 멈췄으면 이유를 함께 알린다
+    const stoppedNote = why ? ` 「말하기 끝」을 누르기 전에 인식이 멈췄습니다 (${why}). 더 말할 내용은 마이크를 다시 눌러 주세요.` : ''
     setVoice({ phase: 'thinking' })
     const before = latest.current
     try {
@@ -75,10 +77,10 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
       setD((prev) => ({ ...prev, ...fields }))
       if (aiConnected) {
         setUndo({ draft: before, label: mode === 'new' ? 'AI 채우기 되돌리기' : 'AI 보완 되돌리기' })
-        setVoiceNote(mode === 'new' ? 'AI가 칸을 채웠습니다. 확인하고 저장해 주세요.' : 'AI가 내용을 보완했습니다. 확인하고 저장해 주세요.')
+        setVoiceNote((mode === 'new' ? 'AI가 칸을 채웠습니다. 확인하고 저장해 주세요.' : 'AI가 내용을 보완했습니다. 확인하고 저장해 주세요.') + stoppedNote)
       } else {
         setUndo({ draft: before, label: '말로 채우기 되돌리기' })
-        setVoiceNote(mode === 'new' ? '말한 내용을 「한 일」에 적었습니다. 확인하고 저장해 주세요.' : '말한 내용을 「한 일」에 덧붙였습니다. 확인하고 저장해 주세요.')
+        setVoiceNote((mode === 'new' ? '말한 내용을 「한 일」에 적었습니다. 확인하고 저장해 주세요.' : '말한 내용을 「한 일」에 덧붙였습니다. 확인하고 저장해 주세요.') + stoppedNote)
       }
     } catch (x) {
       setErr(friendlyError(x))
@@ -99,7 +101,7 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
     try {
       listening.current = await startListening({
         onText: (text) => setVoice({ phase: 'listening', text }),
-        onEnd: (text) => void organize(text, mode),
+        onEnd: (text, why) => void organize(text, mode, why),
         onError: (message) => {
           listening.current = null
           setVoice({ phase: 'idle' })

@@ -24,17 +24,24 @@ export type Listening = {
 export type ListenHandlers = {
   /** 듣는 동안 지금까지의 글자 (계속 바뀐다) */
   onText: (text: string) => void
-  /** 끝났을 때 최종 글자 (cancel 이면 부르지 않는다) */
-  onEnd: (text: string) => void
+  /**
+   * 끝났을 때 최종 글자 (cancel 이면 부르지 않는다).
+   * 사용자가 「말하기 끝」을 누른 것이 아니라 저절로 멈췄으면 왜 멈췄는지(why)를 함께 준다.
+   */
+  onEnd: (text: string, why?: string) => void
   onError: (message: string) => void
 }
 
 /**
  * 음성 인식은 말이 잠깐 끊기면 저절로 멈춘다. 그래서 「말하기 끝」을 누를 때까지 이어서 다시 듣는다 (최대 5분).
- * 다만 방금 끝난 구간에서 아무 말도 없었으면(조용) 그만 듣는다 — 휴대폰은 다시 들을 때마다 시작음이 나므로
- * 조용한데도 끝없이 되풀이 울리지 않게 한다.
+ * 아무 말도 없는 구간이 SILENT_SESSIONS 번 이어지면(대략 15~30초 조용) 그만 듣는다 —
+ * 휴대폰은 다시 들을 때마다 시작음이 나므로 조용한데도 끝없이 되풀이 울리지 않게 한다.
  */
 const MAX_LISTEN_MS = 5 * 60 * 1000
+const SILENT_SESSIONS = 3
+/** 다시 듣기 시작이 실패하면 잠시 뒤 이만큼 더 시도한다 */
+const RESTART_TRIES = 3
+const RESTART_DELAY_MS = 250
 
 type WebRecognition = {
   lang: string
@@ -44,8 +51,9 @@ type WebRecognition = {
   stop: () => void
   abort: () => void
   onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal?: boolean }> }) => void) | null
-  onerror: ((e: { error: string }) => void) | null
+  onerror: ((e: { error: string; message?: string }) => void) | null
   onend: (() => void) | null
+  onstart: (() => void) | null
 }
 
 const webRecognitionCtor = (): (new () => WebRecognition) | null => {
@@ -87,65 +95,108 @@ function listenWeb(h: ListenHandlers): Listening {
   let finals = '' // 지금 구간에서 확정된 글자
   let current = '' // 지금 구간의 글자 (확정 + 아직 바뀔 수 있는 글자)
   let userStopped = false
-  let cancelled = false
-  let rec: WebRecognition
+  let finished = false
+  let silent = 0 // 아무 말도 없이 끝난 구간이 연달아 몇 번인지
+  let sessions = 0
+  let lastError = '' // 이 구간에서 받은 오류 (멈춘 이유를 알리기 위해)
+  let rec: WebRecognition | null = null
+  let timer: number | undefined
 
   const text = () => merge(committed, current)
 
+  const finish = (report: boolean, why?: string) => {
+    if (finished) return
+    finished = true
+    window.clearTimeout(timer)
+    const r = rec
+    rec = null
+    if (r) { r.onresult = null; r.onerror = null; r.onend = null; r.onstart = null; try { r.abort() } catch { /* 이미 끝났다 */ } }
+    if (report) h.onEnd(text(), why)
+  }
+
   const begin = () => {
-    rec = new Ctor()
-    rec.lang = 'ko-KR'
-    rec.continuous = true // 끄면 안드로이드 브라우저가 첫 마디에서 바로 끝내 버린다
-    rec.interimResults = true
+    const r = new Ctor()
+    rec = r
+    sessions++
+    r.lang = 'ko-KR'
+    r.continuous = true // 끄면 안드로이드 브라우저가 첫 마디에서 바로 끝내 버린다
+    r.interimResults = true
     finals = ''
     current = ''
-    rec.onresult = (e) => {
+    lastError = ''
+    r.onstart = null
+    r.onresult = (e) => {
+      if (r !== rec) return // 이미 지난 구간의 뒤늦은 결과
       // 확정된 결과는 겹치지 않게 모으고, 아직 바뀔 수 있는 결과는 마지막 것만 쓴다
       // (안드로이드는 결과 목록에 앞 글자를 되풀이해 담으므로 그대로 이어 붙이면 같은 말이 두 번 적힌다)
       let done = ''
       let interim = ''
       for (let i = 0; i < e.results.length; i++) {
-        const r = e.results[i]
-        const t = r[0]?.transcript ?? ''
-        if (r.isFinal) done = merge(done, t)
+        const item = e.results[i]
+        const t = item[0]?.transcript ?? ''
+        if (item.isFinal) done = merge(done, t)
         else interim = t
       }
       finals = merge(finals, done)
       current = merge(finals, interim)
       h.onText(text())
     }
-    rec.onerror = (e) => {
-      if (e.error === 'no-speech' || e.error === 'aborted') return // 조용했을 뿐 — onend 에서 끝낸다
-      userStopped = true
-      const message =
-        e.error === 'not-allowed' || e.error === 'service-not-allowed'
-          ? '마이크 사용을 허용해 주세요. (주소창 왼쪽 자물쇠 → 마이크 허용)'
-          : e.error === 'audio-capture'
-            ? '마이크를 찾지 못했습니다. 마이크가 연결되어 있는지 확인해 주세요.'
-            : e.error === 'network'
-              ? '음성 인식에 인터넷 연결이 필요합니다.'
-              : `음성 인식 오류 (${e.error})`
-      cancelled = true
-      h.onError(message)
+    r.onerror = (e) => {
+      if (r !== rec) return
+      lastError = e.error
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        // 다시 듣는 중에 막혔으면 지금까지 들은 글자는 살린다
+        if (sessions > 1) { finish(true, `브라우저가 다시 듣기를 막았습니다 (${e.error}, ${sessions}번째 구간)`); return }
+        finish(false)
+        h.onError('마이크 사용을 허용해 주세요. (주소창 왼쪽 자물쇠 → 마이크 허용)')
+      } else if (e.error === 'audio-capture') {
+        finish(false)
+        h.onError('마이크를 찾지 못했습니다. 마이크가 연결되어 있는지 확인해 주세요.')
+      }
+      // 그 밖의 오류(no-speech · aborted · network 등)는 곧 onend 가 오므로 거기서 이어 듣거나 끝낸다
     }
-    rec.onend = () => {
-      if (cancelled) return
+    r.onend = () => {
+      if (r !== rec || finished) return
       const heard = current.trim() !== ''
       committed = text()
       current = ''
-      // 말이 잠깐 끊겨 멈춘 것이면 이어서 듣는다. 이번 구간에 아무 말도 없었으면(조용) 여기서 끝낸다
-      if (!userStopped && heard && Date.now() - startedAt < MAX_LISTEN_MS) {
-        try { begin(); return } catch { /* 다시 못 들으면 여기서 끝낸다 */ }
-      }
-      h.onEnd(committed)
+      silent = heard ? 0 : silent + 1
+      if (userStopped) { finish(true); return }
+      if (Date.now() - startedAt >= MAX_LISTEN_MS) { finish(true, '5분이 지났습니다'); return }
+      if (silent >= SILENT_SESSIONS) { finish(true, `한동안 말소리가 없었습니다 (${sessions}번째 구간${lastError ? ` · ${lastError}` : ''})`); return }
+      // 말이 잠깐 끊겨 멈춘 것이면 잠시 뒤 이어서 듣는다. 시작이 실패하면 몇 번 더 시도한다
+      restart(0)
     }
-    rec.start()
+    r.start()
   }
 
-  begin()
+  const restart = (attempt: number) => {
+    timer = window.setTimeout(() => {
+      if (finished) return
+      try {
+        begin()
+      } catch (x) {
+        if (attempt + 1 < RESTART_TRIES) restart(attempt + 1)
+        else finish(true, `다시 듣기 시작 실패 (${sessions}번째 구간): ${x instanceof Error ? x.message : String(x)}`)
+      }
+    }, attempt === 0 ? RESTART_DELAY_MS : RESTART_DELAY_MS * (attempt + 1))
+  }
+
+  try {
+    begin()
+  } catch (x) {
+    finished = true
+    throw new Error(`음성 인식을 시작하지 못했습니다. ${x instanceof Error ? x.message : ''}`.trim())
+  }
   return {
-    stop: () => { userStopped = true; rec.stop() },
-    cancel: () => { userStopped = true; cancelled = true; rec.abort() },
+    stop: () => {
+      userStopped = true
+      const r = rec
+      if (r) { try { r.stop() } catch { finish(true) } } else finish(true)
+      // stop() 뒤에 onend 가 안 오는 브라우저를 위해 잠시 뒤 직접 끝낸다
+      window.setTimeout(() => finish(true), 2500)
+    },
+    cancel: () => { userStopped = true; finish(false) },
   }
 }
 
@@ -178,17 +229,18 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
   let finished = false
   let settle: number | undefined
   let restartedAt = 0
+  let silent = 0
   const handles: PluginListenerHandle[] = []
 
   const text = () => merge(committed, current)
 
-  const finish = (report: boolean) => {
+  const finish = (report: boolean, why?: string) => {
     if (finished) return
     finished = true
     window.clearTimeout(settle)
     handles.forEach((x) => void x.remove())
     void NativeSpeech.stop().catch(() => undefined)
-    if (report) h.onEnd(text())
+    if (report) h.onEnd(text(), why)
   }
 
   const begin = async () => {
@@ -196,8 +248,9 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
       await NativeSpeech.start({ language: 'ko-KR', partialResults: true, popup: false, maxResults: 1 })
     } catch (x) {
       // 들은 글자가 있으면 그것으로 끝내고, 처음부터 실패했으면 알린다
-      if (text()) finish(true)
-      else { finish(false); h.onError(`음성 인식을 시작하지 못했습니다. ${x instanceof Error ? x.message : ''}`.trim()) }
+      const reason = x instanceof Error ? x.message : String(x)
+      if (text()) finish(true, `다시 듣기 시작 실패: ${reason}`)
+      else { finish(false); h.onError(`음성 인식을 시작하지 못했습니다. ${reason}`.trim()) }
     }
   }
 
@@ -207,7 +260,10 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
     settle = window.setTimeout(() => {
       if (finished) return
       const heard = current.trim() !== ''
-      if (userStopped || !heard || Date.now() - startedAt >= MAX_LISTEN_MS) { finish(true); return }
+      silent = heard ? 0 : silent + 1
+      if (userStopped) { finish(true); return }
+      if (Date.now() - startedAt >= MAX_LISTEN_MS) { finish(true, '5분이 지났습니다'); return }
+      if (silent >= SILENT_SESSIONS) { finish(true, '한동안 말소리가 없었습니다'); return }
       previous = current.trim()
       committed = text()
       current = ''
