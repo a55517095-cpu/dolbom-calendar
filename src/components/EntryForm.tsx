@@ -4,7 +4,7 @@ import { friendlyError } from '../lib/api'
 import { formatHM, monthHours, spanMinutes, spanOf } from '../lib/careHours'
 import type { CareDraft } from '../lib/types'
 import {
-  CONTENT_KEYS, LISTEN_UNSUPPORTED, canListen, fillCareByVoice, hasContent, startListening,
+  CONTENT_KEYS, LISTEN_UNSUPPORTED, ONE_SHOT, canListen, fillCareByVoice, hasContent, startListening,
   type Listening, type VoiceMode,
 } from '../lib/voice'
 
@@ -155,13 +155,14 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
       : voice.phase === 'thinking' ? (aiConnected ? 'AI가 정리하는 중…' : '적는 중…')
         : filled ? '말로 보완하기' : '말로 채우기'
 
-  const idleHelp = aiConnected
+  const more = ONE_SHOT && !filled ? ' 빠진 내용은 마이크를 다시 누르고 말하면 덧붙여집니다.' : ''
+  const idleHelp = (aiConnected
     ? filled
       ? '마이크를 누르고 더할 내용이나 고칠 점을 말하면 AI가 지금 내용에 보완합니다.'
       : '마이크를 누르고 오늘 한 일을 말하면 AI가 아래 칸을 알맞게 채웁니다.'
     : filled
       ? '마이크를 누르고 더할 내용을 말하면 「한 일」에 덧붙입니다. (설정에서 AI를 연결하면 칸별로 정리됩니다)'
-      : '마이크를 누르고 오늘 한 일을 말하면 「한 일」에 적어 줍니다. (설정에서 AI를 연결하면 칸별로 정리됩니다)'
+      : '마이크를 누르고 오늘 한 일을 말하면 「한 일」에 적어 줍니다. (설정에서 AI를 연결하면 칸별로 정리됩니다)') + more
 
   return (
     <form className="form" onSubmit={submit} onKeyDown={onKeyDown}>
@@ -185,7 +186,12 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
 
         {voice.phase === 'listening' ? (
           <p className="voice-live" aria-live="polite">
-            {voice.text || <span className="muted">듣고 있습니다. 한 일 · 시간 · 대상 · 특이사항을 편하게 말씀하세요.</span>}
+            {voice.text || (
+              <span className="muted">
+                듣고 있습니다. 한 일 · 시간 · 대상 · 특이사항을 편하게 말씀하세요.
+                {ONE_SHOT && ' 말을 마치고 잠시 멈추면 저절로 끝납니다.'}
+              </span>
+            )}
           </p>
         ) : voiceNote ? (
           <p className="voice-note" role="status">{voiceNote}</p>

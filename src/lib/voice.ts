@@ -29,8 +29,16 @@ export type ListenHandlers = {
   onError: (message: string) => void
 }
 
-/** 음성 인식은 말이 잠깐 끊기면 저절로 멈추므로, 사용자가 끝낼 때까지 이어서 다시 듣는다 (최대 5분) */
+/** PC 브라우저는 말이 잠깐 끊기면 저절로 멈추므로, 사용자가 끝낼 때까지 이어서 다시 듣는다 (최대 5분) */
 const MAX_LISTEN_MS = 5 * 60 * 1000
+
+/**
+ * 휴대폰(앱 · 삼성인터넷 · 크롬)은 한 번 누르면 한 번 듣고 끝낸다.
+ * 휴대폰 음성 인식은 말이 잠깐 끊기면 무조건 멈추는데, 그때마다 다시 듣기를 시작하면
+ * 시작음이 되풀이 울리고 안드로이드 크롬 계열에서는 앞서 들은 글자가 다시 붙어 같은 말이 두 번 적힌다.
+ * 더 말할 내용은 마이크를 다시 누르면 「보완하기」로 덧붙는다.
+ */
+export const ONE_SHOT = Capacitor.isNativePlatform() || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
 type WebRecognition = {
   lang: string
@@ -39,7 +47,7 @@ type WebRecognition = {
   start: () => void
   stop: () => void
   abort: () => void
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal?: boolean }> }) => void) | null
   onerror: ((e: { error: string }) => void) | null
   onend: (() => void) | null
 }
@@ -77,12 +85,18 @@ function listenWeb(h: ListenHandlers): Listening {
   const begin = () => {
     rec = new Ctor()
     rec.lang = 'ko-KR'
-    rec.continuous = true
+    rec.continuous = !ONE_SHOT
     rec.interimResults = true
     rec.onresult = (e) => {
-      let s = ''
-      for (let i = 0; i < e.results.length; i++) s += e.results[i][0].transcript
-      current = s
+      if (ONE_SHOT) {
+        // 안드로이드 브라우저는 결과 목록에 앞 글자를 되풀이해 담으므로 마지막 결과만 쓴다
+        const last = e.results[e.results.length - 1]
+        current = last ? last[0].transcript : current
+      } else {
+        let s = ''
+        for (let i = 0; i < e.results.length; i++) s += e.results[i][0].transcript
+        current = s
+      }
       h.onText(text())
     }
     rec.onerror = (e) => {
@@ -103,7 +117,7 @@ function listenWeb(h: ListenHandlers): Listening {
       if (cancelled) return
       committed = text()
       current = ''
-      if (!userStopped && Date.now() - startedAt < MAX_LISTEN_MS) {
+      if (!ONE_SHOT && !userStopped && Date.now() - startedAt < MAX_LISTEN_MS) {
         try { begin(); return } catch { /* 다시 못 들으면 여기서 끝낸다 */ }
       }
       h.onEnd(committed)
@@ -132,22 +146,16 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
   /**
    * 안드로이드 음성 인식의 순서: 말이 끊기면 listeningState:stopped 가 먼저 오고,
    * 그 뒤(보통 0.5초 안)에 최종 글자가 partialResults 로 한 번 더 온다.
-   * 그래서 stopped 가 오자마자 글자를 확정하고 다시 들으면, 뒤늦게 온 최종 글자가
-   * 새 구간의 글자로 붙어 같은 말이 두 번 적히고 시작음도 그때마다 울렸다.
-   * → stopped 뒤에는 잠시 기다려 최종 글자까지 받은 다음 구간을 확정한다.
+   * → stopped 뒤에는 잠시 기다려 최종 글자까지 받은 다음 끝낸다. (한 번 누르면 한 번 듣는다 · ONE_SHOT)
    */
   const FINAL_WAIT_MS = 900
 
-  const startedAt = Date.now()
-  let committed = ''
   let current = ''
-  let userStopped = false
   let finished = false
   let settle: number | undefined
-  let restartedAt = 0
   const handles: PluginListenerHandle[] = []
 
-  const text = () => join(committed, current)
+  const text = () => current.trim()
 
   const finish = (report: boolean) => {
     if (finished) return
@@ -168,43 +176,33 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
     }
   }
 
-  /** 한 구간이 끝났다 — 최종 글자를 기다린 뒤, 사용자가 끝내지 않았으면 이어서 듣는다 */
-  const segmentEnded = () => {
+  /** 듣기가 끝났다 — 최종 글자를 기다린 뒤 끝낸다 */
+  const settleAndFinish = () => {
     window.clearTimeout(settle)
-    settle = window.setTimeout(() => {
-      if (finished) return
-      if (userStopped || Date.now() - startedAt >= MAX_LISTEN_MS) { finish(true); return }
-      committed = text()
-      current = ''
-      restartedAt = Date.now()
-      void begin()
-    }, FINAL_WAIT_MS)
+    settle = window.setTimeout(() => finish(true), FINAL_WAIT_MS)
   }
 
   handles.push(
     await NativeSpeech.addListener('partialResults', (d) => {
       const match = (d.matches?.[0] ?? '').trim()
       if (!match || finished) return
-      // 다시 듣기 직후, 앞 구간의 최종 글자가 뒤늦게 한 번 더 오면(이미 확정한 글자와 같으면) 무시한다
-      if (!current && Date.now() - restartedAt < 1500 && committed.endsWith(match)) return
       current = match
       h.onText(text())
     }),
     await NativeSpeech.addListener('listeningState', (d) => {
       if (d.status !== 'stopped' || finished) return
-      segmentEnded()
+      settleAndFinish()
     }),
   )
 
   await begin()
   return {
     stop: () => {
-      userStopped = true
       // 멈추면 listeningState:stopped → 최종 글자 순서로 오고 그때 끝난다. 안 오는 기기를 위해 잠시 뒤 직접 끝낸다
       void NativeSpeech.stop().catch(() => undefined)
       window.setTimeout(() => finish(true), FINAL_WAIT_MS + 1500)
     },
-    cancel: () => { userStopped = true; finish(false) },
+    cancel: () => finish(false),
   }
 }
 
