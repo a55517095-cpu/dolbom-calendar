@@ -4,10 +4,11 @@ import {
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import {
-  SheetNotConnected, byTime, createCareLog, createEvent, deleteCareLog, deleteEvent, fetchDayNotes,
-  fetchJournal, fetchMembers, fetchPosts, fetchShifts, friendlyError, getSheetUrl, saveMenus, saveSheetUrl,
+  StoreMissing, byTime, createCareLog, createEvent, deleteCareLog, deleteEvent, fetchDayNotes,
+  fetchJournal, fetchMembers, fetchPosts, fetchShifts, friendlyError, saveMenus,
   updateCareLog, updateEvent,
 } from '../lib/api'
+import { refreshAiStatus } from '../lib/ai'
 import { currentYearMonth, monthRange } from '../lib/date'
 import { DEMO, demoSession, demoSource, type DataSource } from '../lib/demo'
 import { DEFAULT_MENUS, EVENT, byEventTime, isLineMenu, normalizeMenus } from '../lib/menus'
@@ -28,7 +29,7 @@ type Ctx = {
   /** 로그인한 사람(김태순 님)의 근무 (Supabase) */
   shifts: Shift[]
   dayNotes: DayNote[]
-  /** 돌봄 일지 · 한 줄 일정 · 메뉴 (구글시트) */
+  /** 돌봄 일지 · 한 줄 일정 · 메뉴 (Supabase care_* 표) */
   careLogs: CareLog[]
   events: EventItem[]
   menus: Menu[]
@@ -36,11 +37,9 @@ type Ctx = {
   lineMenuOf: (menuId: string) => Menu
   colorOf: (menuId: string) => string
 
-  /** 구글시트 연결 주소가 아직 없다 */
-  sheetMissing: boolean
-  sheetUrl: string
-  setSheetUrl: (url: string) => void
-  /** 구글시트 스크립트에 AI 키가 연결돼 있어 말로 채우기가 칸별로 정리된다 */
+  /** 일지 표가 Supabase 에 아직 없다 (supabase/care_journal.sql 미실행) */
+  storeMissing: boolean
+  /** AI 키가 연결돼 있어 「AI 로 정리」를 쓸 수 있다 */
   aiConnected: boolean
   setAiConnected: (connected: boolean) => void
 
@@ -69,10 +68,10 @@ export function useApp(): Ctx {
   return ctx
 }
 
-/** 구글시트는 바뀌어도 알려주지 않으므로, 화면을 보고 있는 동안 이 간격으로 새로 읽는다 */
+/** 실시간 알림이 못 오는 경우를 대비해, 화면을 보고 있는 동안 이 간격으로 새로 읽는다 */
 const POLL_MS = 60_000
 
-/** 실제 데이터(근무: Supabase, 일지 · 일정 · 메뉴: 구글시트) · 체험 화면(?demo)이면 예시 데이터 */
+/** 실제 데이터(Supabase) · 체험 화면(?demo)이면 예시 데이터 */
 const source: DataSource = DEMO ? demoSource : {
   fetchMembers, fetchPosts, fetchShifts, fetchDayNotes, fetchJournal,
   createCareLog, updateCareLog, deleteCareLog, createEvent, updateEvent, deleteEvent, saveMenus,
@@ -104,8 +103,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [careLogs, setCareLogs] = useState<CareLog[]>([])
   const [events, setEvents] = useState<EventItem[]>([])
   const [menus, setMenusState] = useState<Menu[]>(cachedMenus)
-  const [sheetMissing, setSheetMissing] = useState(false)
-  const [sheetUrl, setSheetUrlState] = useState(getSheetUrl)
+  const [storeMissing, setStoreMissing] = useState(false)
   const [aiConnected, setAiConnected] = useState(false)
 
   const [loading, setLoading] = useState(false)
@@ -140,6 +138,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!next) {
         setMe(null)
         setShifts([]); setDayNotes([]); setCareLogs([]); setEvents([])
+        setAiConnected(false)
         setReady(true)
       }
     })
@@ -164,9 +163,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { void loadBase() }, [loadBase])
 
+  // AI 연결 여부 — 로그인 뒤 한 번, 그리고 설정에서 바꾸면 바로 반영된다
+  const meId = me?.id
+  useEffect(() => {
+    if (!meId || DEMO) return
+    refreshAiStatus().then((s) => setAiConnected(s.connected)).catch(() => setAiConnected(false))
+  }, [meId])
+
   // ─── 그 달의 근무 · 일지 · 일정 ───────────────────────────────────────────
 
-  const meId = me?.id
   const loadMonth = useCallback(async () => {
     if (!session || !meId) return
     const key = `${year}-${month}`
@@ -191,21 +196,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (sh.status === 'fulfilled') setShifts(sh.value)
       if (notes.status === 'fulfilled') setDayNotes(notes.value)
-      const notConnected = journal.status === 'rejected' && journal.reason instanceof SheetNotConnected
-      setSheetMissing(notConnected)
+      const missing = journal.status === 'rejected' && journal.reason instanceof StoreMissing
+      setStoreMissing(missing)
       if (journal.status === 'fulfilled') {
         setCareLogs(journal.value.care)
         setEvents(journal.value.events)
         applyMenus(journal.value.menus)
-        setAiConnected(Boolean(journal.value.aiConnected))
-      } else if (notConnected) {
+      } else if (missing) {
         setCareLogs([])
         setEvents([])
-        setAiConnected(false)
       }
 
       const failed = [sh, notes, journal].find(
-        (r): r is PromiseRejectedResult => r.status === 'rejected' && !(r === journal && notConnected),
+        (r): r is PromiseRejectedResult => r.status === 'rejected' && !(r === journal && missing),
       )
       setError(failed ? friendlyError(failed.reason) : null)
       setLoading(false)
@@ -219,8 +222,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (inflight.current === entry) inflight.current = null
       if (entry.again && seq === requestSeq.current) void loadMonthRef.current()
     }
-    // sheetUrl 이 바뀌면(설정에서 연결) 다시 불러온다
-  }, [session, meId, year, month, sheetUrl, applyMenus]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session, meId, year, month, applyMenus])
 
   const loadMonthRef = useRef(loadMonth)
   loadMonthRef.current = loadMonth
@@ -228,8 +230,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void loadMonth() }, [loadMonth])
 
   // ─── 최신으로 유지 ────────────────────────────────────────────────────────
-  // 근무표 앱에서 교대하면 바로, 다른 기기(PC ↔ 휴대폰)에서 쓴 기록은
-  // 창으로 돌아올 때 또는 1분 안에 반영된다.
+  // 근무표 앱에서 교대하면 바로, 다른 기기(PC ↔ 휴대폰)에서 쓴 일지 · 일정도 바로 반영된다.
+  // 실시간 알림이 안 오는 환경을 위해 창으로 돌아올 때와 1분마다도 새로 읽는다.
 
   useEffect(() => {
     if (!session || DEMO) return
@@ -242,6 +244,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .channel('care-calendar-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, nudge)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedules' }, nudge)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'care_logs' }, nudge)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'care_events' }, nudge)
       .subscribe()
     return () => {
       window.clearTimeout(timer)
@@ -279,19 +283,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     year, month,
     setMonth: (y, m) => { setYear(y); setMonthState(m) },
     shifts, dayNotes, careLogs, events, menus, lineMenuOf, colorOf,
-    sheetMissing, sheetUrl, aiConnected, setAiConnected,
-    setSheetUrl: (url) => { saveSheetUrl(url); setSheetUrlState(getSheetUrl()) },
+    storeMissing, aiConnected, setAiConnected,
     loading, error,
     refresh: async () => { await loadBase(); await loadMonth() },
     postName: (id) => postIndex.get(id) ?? '근무',
     saveCare: async (draft, id) => {
       const row = id ? await source.updateCareLog(id, draft) : await source.createCareLog(draft)
       if (row) {
-        // 돌려받은 줄을 바로 화면에 넣고, 확인용 다시 읽기는 뒤에서 조용히 한다 (저장이 두 배 빨라진다)
+        // 돌려받은 줄을 바로 화면에 넣고, 확인용 다시 읽기는 뒤에서 조용히 한다
         setCareLogs((prev) => [...prev.filter((c) => c.id !== row.id), row].sort(byTime))
         void loadMonth()
       } else {
-        await loadMonth() // 예전 스크립트는 줄을 돌려주지 않으므로 다시 읽을 때까지 기다린다
+        await loadMonth()
       }
       showToast(id ? '일지를 고쳤습니다.' : '일지를 저장했습니다.')
     },

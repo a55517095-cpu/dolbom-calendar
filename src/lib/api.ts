@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import { readStored, writeStored } from './storage'
 import { byEventTime, normalizeMenus } from './menus'
 import type {
-  CareDraft, CareFields, CareLog, DayNote, EventDraft, EventItem, JournalMonth, Member, Menu, Post, PublicMember, Shift,
+  CareDraft, CareLog, DayNote, EventDraft, EventItem, JournalMonth, Member, Menu, Post, PublicMember, Shift,
 } from './types'
 
 type PgError = { message?: string; code?: string }
@@ -15,6 +15,8 @@ export function friendlyError(err: unknown): string {
   if (raw.includes('Failed to fetch') || raw.includes('NetworkError'))
     return '인터넷 연결을 확인해 주세요.'
   if (raw.includes('JWT')) return '로그인이 만료되었습니다. 다시 로그인해 주세요.'
+  if (isStoreMissing(err)) return STORE_MISSING_MESSAGE
+  if (raw.includes('row-level security')) return '이 기록을 쓸 권한이 없습니다. 근무표 명단에 연결된 계정으로 로그인했는지 확인해 주세요.'
   return raw
 }
 
@@ -62,114 +64,27 @@ export async function fetchDayNotes(from: string, to: string): Promise<DayNote[]
   return data ?? []
 }
 
-// ─── 돌봄 일지 · 일정 · 메뉴 (구글시트 · google-apps-script/Code.gs) ─────────
+// ─── 돌봄 일지 · 일정 · 메뉴 (Supabase · supabase/care_journal.sql) ──────────
+// 근무표와 같은 Supabase 프로젝트의 care_logs · care_events · care_menus 표에 저장한다.
+// 행 수준 보안으로 본인 것만 읽고 쓴다. owner_id 는 서버가 로그인한 사람으로 채운다.
 
-const SHEET_URL_KEY = 'care-cal-sheet-url'
+/** 일지 표가 아직 없다 (supabase/care_journal.sql 을 실행하지 않았다) */
+export class StoreMissing extends Error {}
 
-/** 설정 화면에서 넣은 주소가 우선, 없으면 빌드할 때 넣은 주소 */
-export function getSheetUrl(): string {
-  return (readStored(SHEET_URL_KEY) || import.meta.env.VITE_SHEET_API_URL || '').trim()
+export const STORE_MISSING_MESSAGE =
+  '돌봄 일지를 저장할 표가 Supabase 에 아직 없습니다. README 「1. Supabase 표 만들기」대로 supabase/care_journal.sql 을 실행해 주세요.'
+
+/** 표가 없을 때 PostgREST 가 내는 오류 (42P01 = relation does not exist, PGRST205 = 스키마 캐시에 없음) */
+export function isStoreMissing(err: unknown): boolean {
+  const e = err as PgError | null
+  const code = e?.code ?? ''
+  const msg = e?.message ?? ''
+  return code === '42P01' || code === 'PGRST205' || /relation .*care_/.test(msg) || /Could not find the table 'public\.care_/.test(msg)
 }
 
-export function saveSheetUrl(url: string): void {
-  writeStored(SHEET_URL_KEY, url.trim())
-}
-
-export const looksLikeSheetUrl = (url: string) =>
-  /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url.trim())
-
-/** 구글시트 연결 주소가 아직 없다 */
-export class SheetNotConnected extends Error {}
-
-const OUTDATED_SCRIPT =
-  '구글시트 스크립트가 예전 버전입니다. README 「구글시트 연결」대로 Code.gs 를 새로 붙여넣고 「새 버전」으로 다시 배포해 주세요.'
-
-/** 구글 웹 앱은 가끔 JSON 대신 HTML 오류 페이지("Sorry, unable to open the file…")를 잠깐 돌려준다 → 잠시 뒤 다시 시도 */
-const RETRY_DELAYS_MS = [700, 1800]
-/**
- * 한 번 요청에 기다리는 최대 시간. 구글시트 스크립트는 보통 1~4초지만 처음 깨어날 때나 구글이 느릴 때 훨씬 길어지고,
- * AI 정리는 모델이 답하는 시간까지 더해진다. 너무 일찍 끊으면 "응답하지 않습니다"만 뜨고 서버는 계속 일하고 있으므로 넉넉히 기다린다.
- */
-const TIMEOUT_MS: Record<string, number> = { voiceFill: 120_000, saveAiKey: 60_000 }
-const READ_TIMEOUT_MS = 45_000
-const WRITE_TIMEOUT_MS = 60_000
-const WRITES = new Set(['create', 'update', 'delete', 'createEvent', 'updateEvent', 'deleteEvent', 'saveMenus', 'removeAiKey'])
-const timeoutFor = (action: string) => TIMEOUT_MS[action] ?? (WRITES.has(action) ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS)
-
-/** 같은 요청을 두 번 보내면 줄이 두 개 생길 수 있는 요청은 다시 시도하지 않는다 */
-const NO_RETRY = new Set(['create', 'createEvent'])
-
-/** 잠시 뒤 다시 보내도 되는 오류 (구글의 일시적 오류 페이지 · 연결 실패) */
-class Transient extends Error {}
-
-/** 시간이 너무 걸려 끊은 요청 — 서버는 아직 처리 중일 수 있으므로 자동으로 다시 보내지 않는다 */
-function timedOut(action: string): Error {
-  if (action === 'voiceFill') return new Error('AI 정리가 너무 오래 걸립니다. 잠시 뒤 「AI 로 정리」를 다시 눌러 주세요.')
-  if (WRITES.has(action)) {
-    return new Error('구글시트 응답이 너무 늦습니다. 저장됐을 수도 있으니 달력을 새로 고쳐 확인한 뒤 다시 시도해 주세요.')
-  }
-  return new Error('구글시트가 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.')
-}
-
-async function callSheet<T extends object = object>(
-  action: string, payload: Record<string, unknown> = {},
-): Promise<T> {
-  const url = getSheetUrl()
-  if (!url) throw new SheetNotConnected('구글시트가 아직 연결되지 않았습니다.')
-
-  // 구글시트 쪽에서 김태순 님 로그인이 맞는지 확인할 수 있게 로그인 토큰을 함께 보낸다
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token
-  if (!token) throw new Error('로그인이 만료되었습니다. 다시 로그인해 주세요.')
-
-  const body = JSON.stringify({ action, token, ...payload })
-  const retries = NO_RETRY.has(action) ? 0 : RETRY_DELAYS_MS.length
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await postSheet<T>(url, body, action)
-    } catch (e) {
-      if (!(e instanceof Transient) || attempt >= retries) throw e
-      await new Promise((r) => window.setTimeout(r, RETRY_DELAYS_MS[attempt]))
-    }
-  }
-}
-
-async function postSheet<T extends object>(url: string, body: string, action: string): Promise<T> {
-  const abort = new AbortController()
-  const timer = window.setTimeout(() => abort.abort(), timeoutFor(action))
-  let text: string
-  try {
-    // 본문을 문자열(text/plain)로 보내야 구글 웹 앱이 사전 확인 요청 없이 받아준다
-    const res = await fetch(url, { method: 'POST', body, signal: abort.signal })
-    text = await res.text()
-  } catch {
-    if (abort.signal.aborted) throw timedOut(action)
-    throw new Transient('구글시트에 연결하지 못했습니다. 인터넷 연결과, 웹 앱 액세스 권한이 "모든 사용자"인지 확인해 주세요.')
-  } finally {
-    window.clearTimeout(timer)
-  }
-
-  let parsed: { ok?: boolean; error?: string }
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    // 구글이 잠깐 내는 HTML 오류 페이지인지, 주소가 틀린 것인지 구분한다
-    const head = text.slice(0, 2000)
-    if (/unable to open the file|try again|잠시 후|다시 시도/i.test(head)) {
-      throw new Transient('구글시트가 잠시 응답하지 못했습니다. 잠시 뒤 다시 시도해 주세요.')
-    }
-    if (/<html|<!doctype/i.test(head)) {
-      throw new Error(
-        '구글시트 응답을 읽지 못했습니다. 연결 주소가 웹 앱 주소(…/exec)가 맞는지, 배포 액세스 권한이 "모든 사용자"인지 확인해 주세요.',
-      )
-    }
-    throw new Transient('구글시트 응답을 읽지 못했습니다. 잠시 뒤 다시 시도해 주세요.')
-  }
-  if (!parsed.ok) {
-    const message = parsed.error || '구글시트 처리 중 오류가 생겼습니다.'
-    throw new Error(message === '알 수 없는 요청입니다.' ? OUTDATED_SCRIPT : message)
-  }
-  return parsed as unknown as T
+function fail(error: PgError): never {
+  if (isStoreMissing(error)) throw new StoreMissing(STORE_MISSING_MESSAGE)
+  throw error
 }
 
 export const byTime = (a: CareLog, b: CareLog) =>
@@ -177,72 +92,217 @@ export const byTime = (a: CareLog, b: CareLog) =>
   (a.start_time || '99').localeCompare(b.start_time || '99') ||
   (a.created_at || '').localeCompare(b.created_at || '')
 
-/** 한 달치 돌봄 일지 · 일정 · 메뉴를 한 번에 */
+const CARE_COLUMNS = 'id, log_date, start_time, end_time, client_name, work_done, special_note, created_at, updated_at'
+const EVENT_COLUMNS = 'id, event_date, event_time, menu_id, body, created_at, updated_at'
+
+type EventRow = {
+  id: string; event_date: string; event_time: string | null; menu_id: string; body: string
+  created_at: string; updated_at: string
+}
+
+const toEvent = (r: EventRow): EventItem => ({
+  id: r.id, date: r.event_date, time: r.event_time, menu_id: r.menu_id, text: r.body,
+  created_at: r.created_at, updated_at: r.updated_at,
+})
+
+const careFromDraft = (d: CareDraft) => ({
+  log_date: d.log_date,
+  start_time: d.start_time || null,
+  end_time: d.end_time || null,
+  client_name: d.client_name.trim() || null,
+  work_done: d.work_done.trim(),
+  special_note: d.special_note.trim() || null,
+})
+
+const eventFromDraft = (d: EventDraft) => ({
+  event_date: d.date,
+  event_time: d.time || null,
+  menu_id: d.menu_id,
+  body: d.text.replace(/\s+/g, ' ').trim().slice(0, 100),
+})
+
+/** 한 달치 돌봄 일지 · 일정 · 메뉴를 한 번에 (세 표를 동시에 읽는다) */
 export async function fetchJournal(from: string, to: string): Promise<JournalMonth> {
-  const r = await callSheet<{
-    rows: CareLog[]; events?: EventItem[]; menus?: Menu[]; ai?: { connected?: boolean }
-  }>('list', { from, to })
+  const [care, events, menus] = await Promise.all([
+    supabase.from('care_logs').select(CARE_COLUMNS).gte('log_date', from).lte('log_date', to),
+    supabase.from('care_events').select(EVENT_COLUMNS).gte('event_date', from).lte('event_date', to),
+    supabase.from('care_menus').select('id, name, color').order('sort_order'),
+  ])
+  if (care.error) fail(care.error)
+  if (events.error) fail(events.error)
+  if (menus.error) fail(menus.error)
   return {
-    care: r.rows.sort(byTime),
-    events: (r.events ?? []).sort(byEventTime),
-    menus: normalizeMenus(r.menus),
-    aiConnected: Boolean(r.ai?.connected),
+    care: ((care.data ?? []) as CareLog[]).sort(byTime),
+    events: ((events.data ?? []) as EventRow[]).map(toEvent).sort(byEventTime),
+    menus: normalizeMenus(menus.data ?? []),
   }
 }
 
-/** 저장한 줄을 돌려받아 화면에 바로 반영한다 (다시 불러올 때까지 기다리지 않아도 된다) */
-export async function createCareLog(draft: CareDraft): Promise<CareLog | null> {
-  const r = await callSheet<{ row?: CareLog }>('create', { draft })
-  return r.row ?? null
+/** 저장한 줄을 돌려받아 화면에 바로 반영한다 */
+export async function createCareLog(draft: CareDraft): Promise<CareLog> {
+  const { data, error } = await supabase.from('care_logs').insert(careFromDraft(draft)).select(CARE_COLUMNS).single()
+  if (error) fail(error)
+  return data as CareLog
 }
 
-export async function updateCareLog(id: string, draft: CareDraft): Promise<CareLog | null> {
-  const r = await callSheet<{ row?: CareLog }>('update', { id, draft })
-  return r.row ?? null
+export async function updateCareLog(id: string, draft: CareDraft): Promise<CareLog> {
+  const { data, error } = await supabase.from('care_logs').update(careFromDraft(draft)).eq('id', id).select(CARE_COLUMNS).maybeSingle()
+  if (error) fail(error)
+  if (!data) throw new Error('일지를 찾을 수 없습니다. 다른 기기에서 지워졌을 수 있습니다.')
+  return data as CareLog
 }
 
 export async function deleteCareLog(id: string): Promise<void> {
-  await callSheet('delete', { id })
+  const { error } = await supabase.from('care_logs').delete().eq('id', id)
+  if (error) fail(error)
 }
 
-export async function createEvent(draft: EventDraft): Promise<EventItem | null> {
-  const r = await callSheet<{ event?: EventItem }>('createEvent', { draft })
-  return r.event ?? null
+export async function createEvent(draft: EventDraft): Promise<EventItem> {
+  const { data, error } = await supabase.from('care_events').insert(eventFromDraft(draft)).select(EVENT_COLUMNS).single()
+  if (error) fail(error)
+  return toEvent(data as EventRow)
 }
 
-export async function updateEvent(id: string, draft: EventDraft): Promise<EventItem | null> {
-  const r = await callSheet<{ event?: EventItem }>('updateEvent', { id, draft })
-  return r.event ?? null
+export async function updateEvent(id: string, draft: EventDraft): Promise<EventItem> {
+  const { data, error } = await supabase.from('care_events').update(eventFromDraft(draft)).eq('id', id).select(EVENT_COLUMNS).maybeSingle()
+  if (error) fail(error)
+  if (!data) throw new Error('일정을 찾을 수 없습니다. 다른 기기에서 지워졌을 수 있습니다.')
+  return toEvent(data as EventRow)
 }
 
 export async function deleteEvent(id: string): Promise<void> {
-  await callSheet('deleteEvent', { id })
+  const { error } = await supabase.from('care_events').delete().eq('id', id)
+  if (error) fail(error)
 }
 
+/** 메뉴 목록을 통째로 저장한다 (지운 메뉴의 일정은 서버가 「일정」으로 옮긴다) */
 export async function saveMenus(menus: Menu[]): Promise<void> {
-  await callSheet('saveMenus', { menus })
+  const { error } = await supabase.rpc('save_care_menus', { p_menus: normalizeMenus(menus) })
+  if (error) fail(error)
 }
 
-export type SheetStatus = { sheet_url: string; count: number; events?: number }
+export type StoreStatus = { count: number; events: number }
 
-/** 설정 화면의 연결 확인 */
-export const pingSheet = () => callSheet<SheetStatus>('ping')
+/** 설정 화면의 저장소 확인 (표가 있는지 · 몇 건 있는지) */
+export async function pingStore(): Promise<StoreStatus> {
+  const [care, events] = await Promise.all([
+    supabase.from('care_logs').select('id', { count: 'exact', head: true }),
+    supabase.from('care_events').select('id', { count: 'exact', head: true }),
+  ])
+  if (care.error) fail(care.error)
+  if (events.error) fail(events.error)
+  return { count: care.count ?? 0, events: events.count ?? 0 }
+}
 
-// ─── AI 연결 (말로 일지 채우기) ── API 키는 구글시트 스크립트에만 저장되고, 앱에는 끝 네 자리만 온다 ──
+// ─── 백업 (CSV) ─────────────────────────────────────────────────────────────
 
-export type AiStatus = { connected: boolean; key_hint: string; model: string }
+const csvCell = (v: string | null | undefined) => {
+  const s = v == null ? '' : String(v)
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
 
-export const fetchAiStatus = () => callSheet<AiStatus>('aiStatus')
+/** 모든 일지와 일정을 CSV 글자로 (엑셀 · 구글시트에서 바로 열린다) */
+export async function exportCsv(): Promise<string> {
+  const [care, events, menus] = await Promise.all([
+    supabase.from('care_logs').select(CARE_COLUMNS).order('log_date'),
+    supabase.from('care_events').select(EVENT_COLUMNS).order('event_date'),
+    supabase.from('care_menus').select('id, name, color').order('sort_order'),
+  ])
+  if (care.error) fail(care.error)
+  if (events.error) fail(events.error)
+  if (menus.error) fail(menus.error)
+  const menuName = new Map(normalizeMenus(menus.data ?? []).map((m) => [m.id, m.name]))
+  const lines: string[] = ['﻿구분,날짜,시작,끝,대상·장소 / 메뉴,한 일 / 내용,특이사항,작성 시각,수정 시각']
+  for (const r of (care.data ?? []) as CareLog[]) {
+    lines.push(['돌봄일지', r.log_date, r.start_time, r.end_time, r.client_name, r.work_done, r.special_note, r.created_at, r.updated_at].map(csvCell).join(','))
+  }
+  for (const r of (events.data ?? []) as EventRow[]) {
+    lines.push(['일정', r.event_date, r.event_time, '', menuName.get(r.menu_id) ?? '일정', r.body, '', r.created_at, r.updated_at].map(csvCell).join(','))
+  }
+  return lines.join('\r\n')
+}
 
-/** 구글시트 스크립트가 Anthropic 에 키를 확인한 뒤 저장한다 */
-export const saveAiKey = (key: string) => callSheet<AiStatus>('saveAiKey', { key })
+// ─── 예전 구글시트에서 가져오기 (한 번만) ─────────────────────────────────────
+// 전에 구글시트(Apps Script 웹 앱)에 저장했던 기록을 Supabase 로 옮긴다.
+// 구글시트 스크립트(google-apps-script/Code.gs)의 list 요청을 그대로 써서 읽는다.
 
-export const removeAiKey = () => callSheet<AiStatus>('removeAiKey')
+const SHEET_URL_KEY = 'care-cal-sheet-url'
 
-/** 말한 내용을 AI 가 칸별로 정리한다 (new = 새로 쓰기, supplement = 지금 내용 보완) */
-export async function voiceFillCare(
-  transcript: string, draft: CareDraft, mode: 'new' | 'supplement',
-): Promise<CareFields> {
-  const r = await callSheet<{ fields: CareFields }>('voiceFill', { transcript, draft, mode })
-  return r.fields
+export const getSheetUrl = (): string => (readStored(SHEET_URL_KEY) || import.meta.env.VITE_SHEET_API_URL || '').trim()
+export const saveSheetUrl = (url: string): void => writeStored(SHEET_URL_KEY, url.trim())
+
+export const looksLikeSheetUrl = (url: string) =>
+  /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url.trim())
+
+type SheetJournal = { rows: CareLog[]; events: EventItem[]; menus: Menu[] }
+
+async function readSheet(url: string): Promise<SheetJournal> {
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+  if (!token) throw new Error('로그인이 만료되었습니다. 다시 로그인해 주세요.')
+  let text: string
+  try {
+    const res = await fetch(url, { method: 'POST', body: JSON.stringify({ action: 'list', token, from: '2000-01-01', to: '2100-12-31' }) })
+    text = await res.text()
+  } catch {
+    throw new Error('구글시트에 연결하지 못했습니다. 인터넷 연결과 웹 앱 주소를 확인해 주세요.')
+  }
+  let body: { ok?: boolean; error?: string; rows?: CareLog[]; events?: EventItem[]; menus?: Menu[] }
+  try {
+    body = JSON.parse(text)
+  } catch {
+    throw new Error('구글시트 응답을 읽지 못했습니다. 연결 주소가 웹 앱 주소(…/exec)가 맞는지 확인해 주세요.')
+  }
+  if (!body.ok) throw new Error(body.error || '구글시트 처리 중 오류가 생겼습니다.')
+  return { rows: body.rows ?? [], events: body.events ?? [], menus: normalizeMenus(body.menus) }
+}
+
+export type ImportResult = { care: number; events: number; menus: number }
+
+const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+
+/** 구글시트가 붙인 id 는 UUID 라 그대로 쓰고, 모양이 다르면 새로 만든다 (한 번에 넣는 줄은 모두 같은 열을 가져야 한다) */
+function importId(id: string): string {
+  if (isUuid(id)) return id.toLowerCase()
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16)
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
+
+const importStamp = (s: string | undefined) => (s && !Number.isNaN(Date.parse(s)) ? new Date(s).toISOString() : new Date().toISOString())
+
+/** 구글시트의 기록을 Supabase 로 복사한다. 같은 id 의 기록은 건너뛰므로 여러 번 눌러도 겹치지 않는다 */
+export async function importFromSheet(url: string): Promise<ImportResult> {
+  const sheet = await readSheet(url)
+  const careRows = sheet.rows
+    .filter((r) => r.log_date && r.work_done)
+    .map((r) => ({
+      id: importId(r.id),
+      ...careFromDraft({
+        log_date: r.log_date, start_time: r.start_time ?? '', end_time: r.end_time ?? '',
+        client_name: r.client_name ?? '', work_done: r.work_done, special_note: r.special_note ?? '',
+      }),
+      created_at: importStamp(r.created_at),
+    }))
+  const eventRows = sheet.events
+    .filter((e) => e.date && e.text)
+    .map((e) => ({
+      id: importId(e.id),
+      ...eventFromDraft({ date: e.date, time: e.time ?? '', menu_id: e.menu_id, text: e.text }),
+      created_at: importStamp(e.created_at),
+    }))
+
+  // 메뉴를 먼저 (일정의 메뉴 id 가 살아 있도록)
+  await saveMenus(sheet.menus)
+  if (careRows.length) {
+    const { error } = await supabase.from('care_logs').upsert(careRows, { onConflict: 'id', ignoreDuplicates: true })
+    if (error) fail(error)
+  }
+  if (eventRows.length) {
+    const { error } = await supabase.from('care_events').upsert(eventRows, { onConflict: 'id', ignoreDuplicates: true })
+    if (error) fail(error)
+  }
+  return { care: careRows.length, events: eventRows.length, menus: sheet.menus.length }
 }

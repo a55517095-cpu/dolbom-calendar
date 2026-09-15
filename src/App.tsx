@@ -42,7 +42,7 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
 export default function App() {
   const {
     session, me, ready, error, refresh, signOut, toast, showToast,
-    year, month, setMonth, shifts, careLogs, events, dayNotes, sheetMissing, loading,
+    year, month, setMonth, shifts, careLogs, events, dayNotes, storeMissing, loading,
     menus, lineMenuOf, colorOf,
   } = useApp()
 
@@ -179,7 +179,7 @@ export default function App() {
         <MonthPicker year={year} month={month} onChange={setMonth} />
         <div className="controls-right">
           <button className="btn ghost" onClick={goThisMonth}>이번 달</button>
-          {!sheetMissing && (
+          {!storeMissing && (
             <>
               <button className="btn event" onClick={() => writeToday('event')}>＋ 일정</button>
               <button className="btn care" onClick={() => writeToday('care')}>＋ 오늘 일지 쓰기</button>
@@ -188,17 +188,18 @@ export default function App() {
         </div>
       </div>
 
-      {sheetMissing && (
+      {storeMissing && (
         <Notice kind="warn">
-          돌봄 일지와 일정을 저장할 구글시트가 아직 연결되지 않았습니다. (근무는 지금도 볼 수 있습니다)
-          <button className="link-btn" onClick={() => setSettingsOpen(true)}>설정에서 연결하기</button>
-          <a className="link-btn" href="?demo">연결 전에 입력 체험해 보기</a>
+          돌봄 일지를 저장할 표가 Supabase 에 아직 없습니다. README 「1. Supabase 표 만들기」대로 SQL 을 한 번 실행해 주세요.
+          (근무는 지금도 볼 수 있습니다)
+          <button className="link-btn" onClick={() => setSettingsOpen(true)}>설정 열기</button>
+          <a className="link-btn" href="?demo">입력 체험해 보기</a>
         </Notice>
       )}
       {error && <Notice kind="error">{error}</Notice>}
       {allHidden && <Notice kind="info">보기를 모두 껐습니다. 위에서 보고 싶은 메뉴를 눌러주세요.</Notice>}
 
-      {!sheetMissing && <CareHours month={month} logs={careLogs} />}
+      {!storeMissing && <CareHours month={month} logs={careLogs} />}
 
       {/* 손가락으로 쓰는 화면(휴대폰 · 태블릿)에서만 보인다 */}
       <div className="cal-tools">

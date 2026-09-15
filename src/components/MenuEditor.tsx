@@ -13,7 +13,7 @@ const FIXED_NOTE: Record<string, string> = {
 
 /** 한 줄 일정 메뉴를 늘리거나 지우고, 모든 메뉴의 색을 바꾼다 */
 export default function MenuEditor({ onClose }: { onClose: () => void }) {
-  const { menus, saveMenus, sheetMissing } = useApp()
+  const { menus, saveMenus, storeMissing } = useApp()
   const [list, setList] = useState<Menu[]>(menus)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -120,16 +120,16 @@ export default function MenuEditor({ onClose }: { onClose: () => void }) {
 
       <button className="btn ghost block" style={{ marginTop: 12 }} onClick={add}>＋ 한 줄 일정 메뉴 추가</button>
 
-      {sheetMissing && <Notice kind="warn">구글시트를 연결해야 메뉴를 저장할 수 있습니다.</Notice>}
+      {storeMissing && <Notice kind="warn">Supabase 에 일지 표를 만들어야 메뉴를 저장할 수 있습니다.</Notice>}
       {err && <div className="form-error" role="alert" style={{ marginTop: 12 }}>{err}</div>}
 
       <div className="form-actions" style={{ marginTop: 14 }}>
         <button className="btn ghost" onClick={requestClose} disabled={busy}>취소</button>
-        <button className="btn" onClick={() => void save()} disabled={busy || sheetMissing || !dirty}>
+        <button className="btn" onClick={() => void save()} disabled={busy || storeMissing || !dirty}>
           {busy ? '저장하는 중…' : '저장'}
         </button>
       </div>
-      <p className="help center">메뉴와 색은 구글시트 「메뉴」 탭에 저장되어 휴대폰과 PC에 똑같이 적용됩니다.</p>
+      <p className="help center">메뉴와 색은 Supabase 에 저장되어 휴대폰과 PC에 똑같이 적용됩니다.</p>
     </Modal>
   )
 }

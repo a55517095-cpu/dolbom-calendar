@@ -39,12 +39,12 @@ export default function DayModal({
   date: initialDate, compose, onClose,
 }: { date: string; compose: Compose; onClose: () => void }) {
   const {
-    year, month, setMonth, shifts, dayNotes, careLogs, events, menus, lineMenuOf, sheetMissing,
+    year, month, setMonth, shifts, dayNotes, careLogs, events, menus, lineMenuOf, storeMissing,
     postName, saveCare, removeCare, saveEvent, removeEvent,
   } = useApp()
 
   const [date, setDate] = useState(initialDate)
-  const [mode, setMode] = useState<Mode>(compose && !sheetMissing ? { kind: compose } : { kind: 'view' })
+  const [mode, setMode] = useState<Mode>(compose && !storeMissing ? { kind: compose } : { kind: 'view' })
   const [dirty, setDirty] = useState(false)
   const [confirm, setConfirm] = useState<Target | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -162,9 +162,9 @@ export default function DayModal({
             )}
           </section>
 
-          {sheetMissing ? (
+          {storeMissing ? (
             <section className="day-sec">
-              <Notice kind="warn">[설정]에서 구글시트를 연결하면 일정과 돌봄 일지를 쓸 수 있습니다.</Notice>
+              <Notice kind="warn">Supabase 에 일지 표를 만들면(README 1) 일정과 돌봄 일지를 쓸 수 있습니다.</Notice>
             </section>
           ) : (
             <>
