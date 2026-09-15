@@ -14,6 +14,7 @@ import { CARE, EVENT, WORK } from './lib/menus'
 import { DEMO, resetDemo } from './lib/demo'
 import { readStored, writeStored } from './lib/storage'
 import { DISPLAY_NAME } from './lib/supabase'
+import { turnLandscape, turnPortrait, useLandscape } from './lib/orientation'
 
 const HIDDEN_KEY = 'care-cal-hidden-menus'
 
@@ -40,7 +41,7 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
 
 export default function App() {
   const {
-    session, me, ready, error, refresh, signOut, toast,
+    session, me, ready, error, refresh, signOut, toast, showToast,
     year, month, setMonth, shifts, careLogs, events, dayNotes, sheetMissing, loading,
     menus, lineMenuOf, colorOf,
   } = useApp()
@@ -61,6 +62,8 @@ export default function App() {
   const [day, setDay] = useState<{ date: string; compose: Compose } | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [menuEditorOpen, setMenuEditorOpen] = useState(false)
+  const landscape = useLandscape()
+  const [rotating, setRotating] = useState(false)
 
   const shiftsByDate = useMemo(() => new Map(shifts.map((s) => [s.work_date, s])), [shifts])
   const careByDate = useMemo(() => groupBy(careLogs, (c) => c.log_date), [careLogs])
@@ -98,6 +101,24 @@ export default function App() {
         </div>
       </div>
     )
+  }
+
+  /** 휴대폰 가로 보기 — 가로로 돌리면 달력으로 내려가 7일을 바로 보여준다 */
+  const toggleOrientation = async () => {
+    if (rotating) return
+    setRotating(true)
+    try {
+      if (landscape) {
+        await turnPortrait()
+      } else {
+        await turnLandscape()
+        window.setTimeout(() => document.querySelector('.sheet')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 400)
+      }
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRotating(false)
+    }
   }
 
   const goThisMonth = () => {
@@ -178,6 +199,14 @@ export default function App() {
       {allHidden && <Notice kind="info">보기를 모두 껐습니다. 위에서 보고 싶은 메뉴를 눌러주세요.</Notice>}
 
       {!sheetMissing && <CareHours month={month} logs={careLogs} />}
+
+      {/* 손가락으로 쓰는 화면(휴대폰 · 태블릿)에서만 보인다 */}
+      <div className="cal-tools">
+        <button className="pill-btn orient-btn" onClick={() => void toggleOrientation()} disabled={rotating}>
+          <span aria-hidden="true">⟲</span>
+          {landscape ? '세로로 보기' : '가로로 보기 · 7일 한눈에'}
+        </button>
+      </div>
 
       <Calendar
         year={year}

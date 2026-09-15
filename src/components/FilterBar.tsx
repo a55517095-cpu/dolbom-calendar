@@ -51,7 +51,9 @@ export default function FilterBar({ menus, hidden, counts, onToggle, onAll, onEd
         </button>
       ))}
 
-      <button className="filter edit" onClick={onEdit}>✎ 메뉴 편집</button>
+      <button className="filter edit" onClick={onEdit} aria-label="메뉴 편집">
+        ✎<span className="edit-label"> 메뉴 편집</span>
+      </button>
     </div>
   )
 }
