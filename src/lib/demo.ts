@@ -21,11 +21,12 @@ export type DataSource = {
   fetchShifts(memberId: string, from: string, to: string): Promise<Shift[]>
   fetchDayNotes(from: string, to: string): Promise<DayNote[]>
   fetchJournal(from: string, to: string): Promise<JournalMonth>
-  createCareLog(draft: CareDraft): Promise<void>
-  updateCareLog(id: string, draft: CareDraft): Promise<void>
+  /** 저장한 줄을 돌려준다 (예전 구글시트 스크립트처럼 돌려주지 못하면 null) */
+  createCareLog(draft: CareDraft): Promise<CareLog | null>
+  updateCareLog(id: string, draft: CareDraft): Promise<CareLog | null>
   deleteCareLog(id: string): Promise<void>
-  createEvent(draft: EventDraft): Promise<void>
-  updateEvent(id: string, draft: EventDraft): Promise<void>
+  createEvent(draft: EventDraft): Promise<EventItem | null>
+  updateEvent(id: string, draft: EventDraft): Promise<EventItem | null>
   deleteEvent(id: string): Promise<void>
   saveMenus(menus: Menu[]): Promise<void>
 }
@@ -170,22 +171,28 @@ export const demoSource: DataSource = {
   }),
   createCareLog: async (draft) => {
     const now = new Date().toISOString()
-    careStore.save([...careStore.load(), { id: newId(), ...careFromDraft(draft), created_at: now, updated_at: now }])
+    const row: CareLog = { id: newId(), ...careFromDraft(draft), created_at: now, updated_at: now }
+    careStore.save([...careStore.load(), row])
+    return row
   },
   updateCareLog: async (id, draft) => {
     const now = new Date().toISOString()
-    careStore.save(careStore.load().map((c) => (c.id === id ? { ...c, ...careFromDraft(draft), updated_at: now } : c)))
+    const list = careStore.save(careStore.load().map((c) => (c.id === id ? { ...c, ...careFromDraft(draft), updated_at: now } : c)))
+    return list.find((c) => c.id === id) ?? null
   },
   deleteCareLog: async (id) => {
     careStore.save(careStore.load().filter((c) => c.id !== id))
   },
   createEvent: async (draft) => {
     const now = new Date().toISOString()
-    eventStore.save([...eventStore.load(), { id: newId(), ...eventFromDraft(draft), created_at: now, updated_at: now }])
+    const item: EventItem = { id: newId(), ...eventFromDraft(draft), created_at: now, updated_at: now }
+    eventStore.save([...eventStore.load(), item])
+    return item
   },
   updateEvent: async (id, draft) => {
     const now = new Date().toISOString()
-    eventStore.save(eventStore.load().map((e) => (e.id === id ? { ...e, ...eventFromDraft(draft), updated_at: now } : e)))
+    const list = eventStore.save(eventStore.load().map((e) => (e.id === id ? { ...e, ...eventFromDraft(draft), updated_at: now } : e)))
+    return list.find((e) => e.id === id) ?? null
   },
   deleteEvent: async (id) => {
     eventStore.save(eventStore.load().filter((e) => e.id !== id))

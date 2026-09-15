@@ -4,13 +4,13 @@ import {
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import {
-  SheetNotConnected, createCareLog, createEvent, deleteCareLog, deleteEvent, fetchDayNotes, fetchJournal,
-  fetchMembers, fetchPosts, fetchShifts, friendlyError, getSheetUrl, saveMenus, saveSheetUrl,
+  SheetNotConnected, byTime, createCareLog, createEvent, deleteCareLog, deleteEvent, fetchDayNotes,
+  fetchJournal, fetchMembers, fetchPosts, fetchShifts, friendlyError, getSheetUrl, saveMenus, saveSheetUrl,
   updateCareLog, updateEvent,
 } from '../lib/api'
 import { currentYearMonth, monthRange } from '../lib/date'
 import { DEMO, demoSession, demoSource, type DataSource } from '../lib/demo'
-import { DEFAULT_MENUS, EVENT, isLineMenu, normalizeMenus } from '../lib/menus'
+import { DEFAULT_MENUS, EVENT, byEventTime, isLineMenu, normalizeMenus } from '../lib/menus'
 import { readStored, writeStored } from '../lib/storage'
 import type {
   CareDraft, CareLog, DayNote, EventDraft, EventItem, Member, Menu, Post, Shift,
@@ -113,6 +113,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | undefined>(undefined)
   const requestSeq = useRef(0)
+  /** 지금 불러오는 중인 달 — 창으로 돌아올 때 focus · visibilitychange 가 겹쳐 같은 달을 두 번 불러오지 않게 한다 */
+  const inflight = useRef<{ key: string; promise: Promise<void>; again: boolean } | null>(null)
 
   const showToast = useCallback((message: string) => {
     setToast(message)
@@ -167,39 +169,61 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const meId = me?.id
   const loadMonth = useCallback(async () => {
     if (!session || !meId) return
+    const key = `${year}-${month}`
+    const running = inflight.current
+    if (running && running.key === key) {
+      // 같은 달을 이미 불러오는 중이면 그 결과를 기다리고, 끝난 뒤 한 번 더 읽는다 (방금 저장한 내용을 놓치지 않게)
+      running.again = true
+      return running.promise
+    }
+
     const seq = ++requestSeq.current
     setLoading(true)
     const { from, to } = monthRange(year, month)
-    const [sh, notes, journal] = await Promise.allSettled([
-      source.fetchShifts(meId, from, to),
-      source.fetchDayNotes(from, to),
-      source.fetchJournal(from, to),
-    ])
-    // 달을 빠르게 넘기면 늦게 도착한 옛 응답이 새 달을 덮어쓰지 않게 한다
-    if (seq !== requestSeq.current) return
+    const job = (async () => {
+      const [sh, notes, journal] = await Promise.allSettled([
+        source.fetchShifts(meId, from, to),
+        source.fetchDayNotes(from, to),
+        source.fetchJournal(from, to),
+      ])
+      // 달을 빠르게 넘기면 늦게 도착한 옛 응답이 새 달을 덮어쓰지 않게 한다
+      if (seq !== requestSeq.current) return
 
-    if (sh.status === 'fulfilled') setShifts(sh.value)
-    if (notes.status === 'fulfilled') setDayNotes(notes.value)
-    const notConnected = journal.status === 'rejected' && journal.reason instanceof SheetNotConnected
-    setSheetMissing(notConnected)
-    if (journal.status === 'fulfilled') {
-      setCareLogs(journal.value.care)
-      setEvents(journal.value.events)
-      applyMenus(journal.value.menus)
-      setAiConnected(Boolean(journal.value.aiConnected))
-    } else if (notConnected) {
-      setCareLogs([])
-      setEvents([])
-      setAiConnected(false)
+      if (sh.status === 'fulfilled') setShifts(sh.value)
+      if (notes.status === 'fulfilled') setDayNotes(notes.value)
+      const notConnected = journal.status === 'rejected' && journal.reason instanceof SheetNotConnected
+      setSheetMissing(notConnected)
+      if (journal.status === 'fulfilled') {
+        setCareLogs(journal.value.care)
+        setEvents(journal.value.events)
+        applyMenus(journal.value.menus)
+        setAiConnected(Boolean(journal.value.aiConnected))
+      } else if (notConnected) {
+        setCareLogs([])
+        setEvents([])
+        setAiConnected(false)
+      }
+
+      const failed = [sh, notes, journal].find(
+        (r): r is PromiseRejectedResult => r.status === 'rejected' && !(r === journal && notConnected),
+      )
+      setError(failed ? friendlyError(failed.reason) : null)
+      setLoading(false)
+    })()
+
+    const entry = { key, promise: job, again: false }
+    inflight.current = entry
+    try {
+      await job
+    } finally {
+      if (inflight.current === entry) inflight.current = null
+      if (entry.again && seq === requestSeq.current) void loadMonthRef.current()
     }
-
-    const failed = [sh, notes, journal].find(
-      (r): r is PromiseRejectedResult => r.status === 'rejected' && !(r === journal && notConnected),
-    )
-    setError(failed ? friendlyError(failed.reason) : null)
-    setLoading(false)
     // sheetUrl 이 바뀌면(설정에서 연결) 다시 불러온다
   }, [session, meId, year, month, sheetUrl, applyMenus]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadMonthRef = useRef(loadMonth)
+  loadMonthRef.current = loadMonth
 
   useEffect(() => { void loadMonth() }, [loadMonth])
 
@@ -261,25 +285,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refresh: async () => { await loadBase(); await loadMonth() },
     postName: (id) => postIndex.get(id) ?? '근무',
     saveCare: async (draft, id) => {
-      if (id) await source.updateCareLog(id, draft)
-      else await source.createCareLog(draft)
-      await loadMonth()
+      const row = id ? await source.updateCareLog(id, draft) : await source.createCareLog(draft)
+      if (row) {
+        // 돌려받은 줄을 바로 화면에 넣고, 확인용 다시 읽기는 뒤에서 조용히 한다 (저장이 두 배 빨라진다)
+        setCareLogs((prev) => [...prev.filter((c) => c.id !== row.id), row].sort(byTime))
+        void loadMonth()
+      } else {
+        await loadMonth() // 예전 스크립트는 줄을 돌려주지 않으므로 다시 읽을 때까지 기다린다
+      }
       showToast(id ? '일지를 고쳤습니다.' : '일지를 저장했습니다.')
     },
     removeCare: async (id) => {
       await source.deleteCareLog(id)
-      await loadMonth()
+      setCareLogs((prev) => prev.filter((c) => c.id !== id))
+      void loadMonth()
       showToast('일지를 지웠습니다.')
     },
     saveEvent: async (draft, id) => {
-      if (id) await source.updateEvent(id, draft)
-      else await source.createEvent(draft)
-      await loadMonth()
+      const item = id ? await source.updateEvent(id, draft) : await source.createEvent(draft)
+      if (item) {
+        setEvents((prev) => [...prev.filter((e) => e.id !== item.id), item].sort(byEventTime))
+        void loadMonth()
+      } else {
+        await loadMonth()
+      }
       showToast(id ? '일정을 고쳤습니다.' : '일정을 추가했습니다.')
     },
     removeEvent: async (id) => {
       await source.deleteEvent(id)
-      await loadMonth()
+      setEvents((prev) => prev.filter((e) => e.id !== id))
+      void loadMonth()
       showToast('일정을 지웠습니다.')
     },
     saveMenus: async (next) => {

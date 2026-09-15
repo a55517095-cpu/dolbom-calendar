@@ -84,6 +84,15 @@ export class SheetNotConnected extends Error {}
 const OUTDATED_SCRIPT =
   '구글시트 스크립트가 예전 버전입니다. README 「구글시트 연결」대로 Code.gs 를 새로 붙여넣고 「새 버전」으로 다시 배포해 주세요.'
 
+/** 구글 웹 앱은 가끔 JSON 대신 HTML 오류 페이지("Sorry, unable to open the file…")를 잠깐 돌려준다 → 잠시 뒤 다시 시도 */
+const RETRY_DELAYS_MS = [700, 1800]
+/** 한 번 요청에 기다리는 최대 시간 (구글시트 스크립트는 보통 1~4초, 잠금 대기까지 10초를 넘기지 않는다) */
+const REQUEST_TIMEOUT_MS = 25_000
+/** 같은 요청을 두 번 보내면 줄이 두 개 생길 수 있는 요청은 다시 시도하지 않는다 */
+const NO_RETRY = new Set(['create', 'createEvent'])
+
+class Transient extends Error {}
+
 async function callSheet<T extends object = object>(
   action: string, payload: Record<string, unknown> = {},
 ): Promise<T> {
@@ -95,28 +104,57 @@ async function callSheet<T extends object = object>(
   const token = data.session?.access_token
   if (!token) throw new Error('로그인이 만료되었습니다. 다시 로그인해 주세요.')
 
+  const body = JSON.stringify({ action, token, ...payload })
+  const retries = NO_RETRY.has(action) ? 0 : RETRY_DELAYS_MS.length
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postSheet<T>(url, body)
+    } catch (e) {
+      if (!(e instanceof Transient) || attempt >= retries) throw e
+      await new Promise((r) => window.setTimeout(r, RETRY_DELAYS_MS[attempt]))
+    }
+  }
+}
+
+async function postSheet<T extends object>(url: string, body: string): Promise<T> {
+  const abort = new AbortController()
+  const timer = window.setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS)
   let text: string
   try {
     // 본문을 문자열(text/plain)로 보내야 구글 웹 앱이 사전 확인 요청 없이 받아준다
-    const res = await fetch(url, { method: 'POST', body: JSON.stringify({ action, token, ...payload }) })
+    const res = await fetch(url, { method: 'POST', body, signal: abort.signal })
     text = await res.text()
   } catch {
-    throw new Error(
-      '구글시트에 연결하지 못했습니다. 인터넷 연결과, 웹 앱 액세스 권한이 "모든 사용자"인지 확인해 주세요.',
+    throw new Transient(
+      abort.signal.aborted
+        ? '구글시트가 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.'
+        : '구글시트에 연결하지 못했습니다. 인터넷 연결과, 웹 앱 액세스 권한이 "모든 사용자"인지 확인해 주세요.',
     )
+  } finally {
+    window.clearTimeout(timer)
   }
 
-  let body: { ok?: boolean; error?: string }
+  let parsed: { ok?: boolean; error?: string }
   try {
-    body = JSON.parse(text)
+    parsed = JSON.parse(text)
   } catch {
-    throw new Error('구글시트 응답을 읽지 못했습니다. 연결 주소가 웹 앱 주소(…/exec)가 맞는지 확인해 주세요.')
+    // 구글이 잠깐 내는 HTML 오류 페이지인지, 주소가 틀린 것인지 구분한다
+    const head = text.slice(0, 2000)
+    if (/unable to open the file|try again|잠시 후|다시 시도/i.test(head)) {
+      throw new Transient('구글시트가 잠시 응답하지 못했습니다. 잠시 뒤 다시 시도해 주세요.')
+    }
+    if (/<html|<!doctype/i.test(head)) {
+      throw new Error(
+        '구글시트 응답을 읽지 못했습니다. 연결 주소가 웹 앱 주소(…/exec)가 맞는지, 배포 액세스 권한이 "모든 사용자"인지 확인해 주세요.',
+      )
+    }
+    throw new Transient('구글시트 응답을 읽지 못했습니다. 잠시 뒤 다시 시도해 주세요.')
   }
-  if (!body.ok) {
-    const message = body.error || '구글시트 처리 중 오류가 생겼습니다.'
+  if (!parsed.ok) {
+    const message = parsed.error || '구글시트 처리 중 오류가 생겼습니다.'
     throw new Error(message === '알 수 없는 요청입니다.' ? OUTDATED_SCRIPT : message)
   }
-  return body as unknown as T
+  return parsed as unknown as T
 }
 
 export const byTime = (a: CareLog, b: CareLog) =>
@@ -137,24 +175,29 @@ export async function fetchJournal(from: string, to: string): Promise<JournalMon
   }
 }
 
-export async function createCareLog(draft: CareDraft): Promise<void> {
-  await callSheet('create', { draft })
+/** 저장한 줄을 돌려받아 화면에 바로 반영한다 (다시 불러올 때까지 기다리지 않아도 된다) */
+export async function createCareLog(draft: CareDraft): Promise<CareLog | null> {
+  const r = await callSheet<{ row?: CareLog }>('create', { draft })
+  return r.row ?? null
 }
 
-export async function updateCareLog(id: string, draft: CareDraft): Promise<void> {
-  await callSheet('update', { id, draft })
+export async function updateCareLog(id: string, draft: CareDraft): Promise<CareLog | null> {
+  const r = await callSheet<{ row?: CareLog }>('update', { id, draft })
+  return r.row ?? null
 }
 
 export async function deleteCareLog(id: string): Promise<void> {
   await callSheet('delete', { id })
 }
 
-export async function createEvent(draft: EventDraft): Promise<void> {
-  await callSheet('createEvent', { draft })
+export async function createEvent(draft: EventDraft): Promise<EventItem | null> {
+  const r = await callSheet<{ event?: EventItem }>('createEvent', { draft })
+  return r.event ?? null
 }
 
-export async function updateEvent(id: string, draft: EventDraft): Promise<void> {
-  await callSheet('updateEvent', { id, draft })
+export async function updateEvent(id: string, draft: EventDraft): Promise<EventItem | null> {
+  const r = await callSheet<{ event?: EventItem }>('updateEvent', { id, draft })
+  return r.event ?? null
 }
 
 export async function deleteEvent(id: string): Promise<void> {

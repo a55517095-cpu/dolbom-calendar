@@ -129,11 +129,22 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
     throw new Error('이 휴대폰에서 음성 인식을 쓸 수 없습니다. 「Google」 앱(음성 인식)이 설치 · 사용 중인지 확인해 주세요.')
   }
 
+  /**
+   * 안드로이드 음성 인식의 순서: 말이 끊기면 listeningState:stopped 가 먼저 오고,
+   * 그 뒤(보통 0.5초 안)에 최종 글자가 partialResults 로 한 번 더 온다.
+   * 그래서 stopped 가 오자마자 글자를 확정하고 다시 들으면, 뒤늦게 온 최종 글자가
+   * 새 구간의 글자로 붙어 같은 말이 두 번 적히고 시작음도 그때마다 울렸다.
+   * → stopped 뒤에는 잠시 기다려 최종 글자까지 받은 다음 구간을 확정한다.
+   */
+  const FINAL_WAIT_MS = 900
+
   const startedAt = Date.now()
   let committed = ''
   let current = ''
   let userStopped = false
   let finished = false
+  let settle: number | undefined
+  let restartedAt = 0
   const handles: PluginListenerHandle[] = []
 
   const text = () => join(committed, current)
@@ -141,6 +152,7 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
   const finish = (report: boolean) => {
     if (finished) return
     finished = true
+    window.clearTimeout(settle)
     handles.forEach((x) => void x.remove())
     void NativeSpeech.stop().catch(() => undefined)
     if (report) h.onEnd(text())
@@ -156,17 +168,31 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
     }
   }
 
+  /** 한 구간이 끝났다 — 최종 글자를 기다린 뒤, 사용자가 끝내지 않았으면 이어서 듣는다 */
+  const segmentEnded = () => {
+    window.clearTimeout(settle)
+    settle = window.setTimeout(() => {
+      if (finished) return
+      if (userStopped || Date.now() - startedAt >= MAX_LISTEN_MS) { finish(true); return }
+      committed = text()
+      current = ''
+      restartedAt = Date.now()
+      void begin()
+    }, FINAL_WAIT_MS)
+  }
+
   handles.push(
     await NativeSpeech.addListener('partialResults', (d) => {
-      current = d.matches?.[0] ?? current
+      const match = (d.matches?.[0] ?? '').trim()
+      if (!match || finished) return
+      // 다시 듣기 직후, 앞 구간의 최종 글자가 뒤늦게 한 번 더 오면(이미 확정한 글자와 같으면) 무시한다
+      if (!current && Date.now() - restartedAt < 1500 && committed.endsWith(match)) return
+      current = match
       h.onText(text())
     }),
     await NativeSpeech.addListener('listeningState', (d) => {
       if (d.status !== 'stopped' || finished) return
-      committed = text()
-      current = ''
-      if (!userStopped && Date.now() - startedAt < MAX_LISTEN_MS) void begin()
-      else finish(true)
+      segmentEnded()
     }),
   )
 
@@ -174,9 +200,9 @@ async function listenNative(h: ListenHandlers): Promise<Listening> {
   return {
     stop: () => {
       userStopped = true
-      // 멈추면 listeningState: stopped 가 오면서 끝난다. 안 오는 기기를 위해 잠시 뒤 직접 끝낸다
+      // 멈추면 listeningState:stopped → 최종 글자 순서로 오고 그때 끝난다. 안 오는 기기를 위해 잠시 뒤 직접 끝낸다
       void NativeSpeech.stop().catch(() => undefined)
-      window.setTimeout(() => finish(true), 1200)
+      window.setTimeout(() => finish(true), FINAL_WAIT_MS + 1500)
     },
     cancel: () => { userStopped = true; finish(false) },
   }
