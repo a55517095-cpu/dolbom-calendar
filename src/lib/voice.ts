@@ -41,7 +41,10 @@ const MAX_LISTEN_MS = 5 * 60 * 1000
 const SILENT_SESSIONS = 3
 /** 다시 듣기 시작이 실패하면 잠시 뒤 이만큼 더 시도한다 */
 const RESTART_TRIES = 3
-const RESTART_DELAY_MS = 250
+const RESTART_DELAY_MS = 300
+
+/** 휴대폰 · 태블릿 (키보드 음성 입력 안내를 보여줄지) */
+export const IS_MOBILE = Capacitor.isNativePlatform() || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
 
 type WebRecognition = {
   lang: string
@@ -179,7 +182,7 @@ function listenWeb(h: ListenHandlers): Listening {
         if (attempt + 1 < RESTART_TRIES) restart(attempt + 1)
         else finish(true, `다시 듣기 시작 실패 (${sessions}번째 구간): ${x instanceof Error ? x.message : String(x)}`)
       }
-    }, attempt === 0 ? RESTART_DELAY_MS : RESTART_DELAY_MS * (attempt + 1))
+    }, attempt === 0 ? 0 : RESTART_DELAY_MS * attempt) // 첫 재시작은 바로 — 말이 새는 틈을 줄인다
   }
 
   try {

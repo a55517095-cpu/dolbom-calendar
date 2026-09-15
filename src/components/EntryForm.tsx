@@ -4,7 +4,7 @@ import { friendlyError } from '../lib/api'
 import { formatHM, monthHours, spanMinutes, spanOf } from '../lib/careHours'
 import type { CareDraft } from '../lib/types'
 import {
-  CONTENT_KEYS, LISTEN_UNSUPPORTED, canListen, fillCareByVoice, hasContent, startListening,
+  CONTENT_KEYS, IS_MOBILE, LISTEN_UNSUPPORTED, canListen, fillCareByVoice, hasContent, startListening,
   type Listening, type VoiceMode,
 } from '../lib/voice'
 
@@ -115,6 +115,33 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
     }
   }
 
+  /**
+   * 「한 일」에 적힌(또는 키보드 음성 입력으로 받아쓴) 글을 AI 가 칸별로 나눠 넣는다.
+   * 휴대폰 브라우저의 음성 인식은 말이 잠깐 끊길 때마다 멈추고 그 틈의 말이 새므로,
+   * 휴대폰에서는 키보드의 마이크로 받아쓴 뒤 이 버튼을 누르는 쪽이 훨씬 안정적이다.
+   */
+  const organizeTyped = async () => {
+    if (voiceBusy || busy || !aiConnected) return
+    const before = latest.current
+    const transcript = before.work_done.trim()
+    if (!transcript) return setErr('먼저 「한 일」 칸에 글을 적거나 받아써 주세요.')
+    const base: CareDraft = { ...before, work_done: '' }
+    const mode: VoiceMode = hasContent(base) ? 'supplement' : 'new'
+    setErr(null)
+    setVoiceNote(null)
+    setVoice({ phase: 'thinking' })
+    try {
+      const fields = await fillCareByVoice(transcript, base, mode, true)
+      setD((prev) => ({ ...prev, ...fields }))
+      setUndo({ draft: before, label: 'AI 정리 되돌리기' })
+      setVoiceNote('AI가 「한 일」의 글을 칸별로 나눠 넣었습니다. 확인하고 저장해 주세요.')
+    } catch (x) {
+      setErr(friendlyError(x))
+    } finally {
+      setVoice({ phase: 'idle' })
+    }
+  }
+
   /** 날짜만 남기고 칸을 비운다 — 다음 마이크는 새로 쓰기 */
   const clearFields = () => {
     setUndo({ draft: d, label: '초기화 되돌리기' })
@@ -158,6 +185,7 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
         : filled ? '말로 보완하기' : '말로 채우기'
 
   const more = !filled ? ' 말이 잠시 끊기면 이어서 듣느라 시작음이 다시 날 수 있습니다.' : ''
+  const canOrganizeTyped = aiConnected && d.work_done.trim() !== '' && !voiceBusy && !busy
   const idleHelp = (aiConnected
     ? filled
       ? '마이크를 누르고 더할 내용이나 고칠 점을 말하면 AI가 지금 내용에 보완합니다.'
@@ -184,6 +212,14 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
         </button>
         {undo && !voiceBusy && (
           <button type="button" className="link-btn" onClick={restore}>↶ {undo.label}</button>
+        )}
+
+        {IS_MOBILE && aiConnected && voice.phase === 'idle' && (
+          <p className="voice-tip">
+            <b>휴대폰에서 더 잘 되는 방법</b> — 「한 일」 칸을 누른 뒤 <b>키보드의 마이크(🎤)</b> 로 받아쓰고,
+            아래 <b>「AI 로 정리」</b> 를 누르면 시간 · 대상 · 한 일 · 특이사항으로 나눠 줍니다.
+            키보드 받아쓰기는 말이 끊겨도 멈추지 않습니다.
+          </p>
         )}
 
         {voice.phase === 'listening' ? (
@@ -236,10 +272,17 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
         <label htmlFor="f-work">한 일</label>
         <textarea
           id="f-work"
-          placeholder="무슨 일을 했는지 적어주세요"
+          placeholder={IS_MOBILE && aiConnected ? '키보드의 마이크(🎤)로 받아쓰거나 직접 적어주세요' : '무슨 일을 했는지 적어주세요'}
           autoFocus
           {...bind('work_done')}
         />
+        {aiConnected && (
+          <div className="organize-row">
+            <button type="button" className="btn ghost sm" onClick={() => void organizeTyped()} disabled={!canOrganizeTyped}>
+              {voice.phase === 'thinking' ? 'AI가 정리하는 중…' : '✦ AI 로 정리 (시간 · 대상 · 특이사항으로 나누기)'}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="field special-field">

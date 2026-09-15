@@ -864,6 +864,18 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
   overflow-wrap: anywhere;
 }
 .voice-note { color: var(--care-ink); font-size: .86rem; font-weight: 600; }
+.voice-tip {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--care) 10%, transparent);
+  color: var(--ink);
+  font-size: .84rem;
+  line-height: 1.5;
+}
+.organize-row { display: flex; justify-content: flex-end; margin-top: 6px; }
+.organize-row .btn { max-width: 100%; white-space: normal; text-align: center; }
 .help.steps { margin: 10px 0 4px; padding-left: 1.3em; }
 .help.steps li { margin: 3px 0; }
 
