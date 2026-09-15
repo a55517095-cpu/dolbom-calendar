@@ -431,7 +431,7 @@ function isFixedMenu_(id) {
 // 키는 앱으로 돌려보내지 않는다 (앞 7자 · 끝 4자만).
 
 const AI_KEY_PROP = 'ANTHROPIC_API_KEY'
-const AI_MODEL = 'claude-opus-5'
+const AI_MODEL = 'claude-sonnet-5' // 받아쓴 글을 칸으로 나누는 일이라 Sonnet 5 로 충분하다 (Opus 5 의 약 2.5분의 1 비용)
 const AI_API = 'https://api.anthropic.com/v1'
 const AI_FIELDS = ['start_time', 'end_time', 'client_name', 'work_done', 'special_note']
 const AI_LIMITS = { start_time: 5, end_time: 5, client_name: 60, work_done: 5000, special_note: 5000 }
@@ -481,7 +481,7 @@ function saveAiKey_(key) {
   if (code === 401 || code === 403) {
     throw new Error('Anthropic 이 이 키를 받아주지 않습니다. 키를 다시 복사해 붙여넣거나 새 키를 만들어 주세요.')
   }
-  if (code === 404) throw new Error('이 키로는 Claude Opus 5 모델을 쓸 수 없습니다. Anthropic 콘솔에서 계정 상태를 확인해 주세요.')
+  if (code === 404) throw new Error('이 키로는 Claude Sonnet 5 모델을 쓸 수 없습니다. Anthropic 콘솔에서 계정 상태를 확인해 주세요.')
   if (code !== 200) throw new Error('Anthropic 에 키를 확인하지 못했습니다. 잠시 뒤 다시 시도해 주세요. (' + code + ')')
   PropertiesService.getScriptProperties().setProperty(AI_KEY_PROP, key)
   return aiStatus_()
@@ -524,12 +524,10 @@ function voiceFill_(req) {
   const res = UrlFetchApp.fetch(AI_API + '/messages', {
     method: 'post',
     contentType: 'application/json',
-    // 안전 분류기가 거절하면 Anthropic 서버에서 알맞은 다른 모델로 한 번 더 시도한다
-    headers: Object.assign(aiHeaders_(key), { 'anthropic-beta': 'server-side-fallback-2026-07-01' }),
+    headers: aiHeaders_(key),
     payload: JSON.stringify({
       model: AI_MODEL,
       max_tokens: 16000,
-      fallbacks: 'default',
       thinking: { type: 'adaptive' },
       output_config: {
         effort: 'medium',
