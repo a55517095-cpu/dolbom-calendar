@@ -190,7 +190,9 @@ export default function EntryForm({ initial, submitLabel, onSubmit, onCancel, on
             >
               {organizing ? 'AI가 정리하는 중…' : '✦ AI 로 정리'}
             </button>
-            <span className="help">시간 · 대상 · 한 일 · 특이사항으로 나눠 넣습니다</span>
+            <span className="help">
+              {organizing ? '보통 5~15초 걸립니다. 잠시만 기다려 주세요.' : '시간 · 대상 · 한 일 · 특이사항으로 나눠 넣습니다'}
+            </span>
           </div>
         )}
       </div>

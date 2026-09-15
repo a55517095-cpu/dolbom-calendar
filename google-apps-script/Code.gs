@@ -139,11 +139,15 @@ function authorize_(token) {
 
 // ─── 탭 만들기 · 줄 읽기 공통 ───────────────────────────────────────────────
 
+/** 한 번의 요청 안에서 시트 탭을 여러 번 찾지 않도록 기억해 둔다 (탭 찾기도 매번 구글 호출이라 느리다) */
+const tabCache_ = {}
+
 /** 이름의 탭을 찾고, 없으면 머리줄 · 텍스트 서식을 갖춰 만든다 */
 function tab_(name, headers, setup, index) {
+  if (tabCache_[name]) return tabCache_[name]
   const ss = SpreadsheetApp.getActiveSpreadsheet()
   let sh = ss.getSheetByName(name)
-  if (sh) return sh
+  if (sh) return (tabCache_[name] = sh)
 
   sh = index == null ? ss.insertSheet(name) : ss.insertSheet(name, index)
   // 날짜·시간이 구글시트 날짜 형식으로 멋대로 바뀌지 않게 전부 "일반 텍스트"
@@ -151,7 +155,7 @@ function tab_(name, headers, setup, index) {
   sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold').setBackground('#e9e0ce')
   sh.setFrozenRows(1)
   setup(sh)
-  return sh
+  return (tabCache_[name] = sh)
 }
 
 /**
@@ -527,10 +531,10 @@ function voiceFill_(req) {
     headers: aiHeaders_(key),
     payload: JSON.stringify({
       model: AI_MODEL,
-      max_tokens: 16000,
+      max_tokens: 4000, // 답은 칸 다섯 개짜리 짧은 JSON
       thinking: { type: 'adaptive' },
       output_config: {
-        effort: 'medium',
+        effort: 'low', // 받아쓴 글을 칸으로 나누는 단순한 정리 — 빨리 답하게
         format: {
           type: 'json_schema',
           schema: { type: 'object', properties: properties, required: AI_FIELDS, additionalProperties: false },

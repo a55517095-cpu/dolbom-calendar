@@ -86,12 +86,30 @@ const OUTDATED_SCRIPT =
 
 /** 구글 웹 앱은 가끔 JSON 대신 HTML 오류 페이지("Sorry, unable to open the file…")를 잠깐 돌려준다 → 잠시 뒤 다시 시도 */
 const RETRY_DELAYS_MS = [700, 1800]
-/** 한 번 요청에 기다리는 최대 시간 (구글시트 스크립트는 보통 1~4초, 잠금 대기까지 10초를 넘기지 않는다) */
-const REQUEST_TIMEOUT_MS = 25_000
+/**
+ * 한 번 요청에 기다리는 최대 시간. 구글시트 스크립트는 보통 1~4초지만 처음 깨어날 때나 구글이 느릴 때 훨씬 길어지고,
+ * AI 정리는 모델이 답하는 시간까지 더해진다. 너무 일찍 끊으면 "응답하지 않습니다"만 뜨고 서버는 계속 일하고 있으므로 넉넉히 기다린다.
+ */
+const TIMEOUT_MS: Record<string, number> = { voiceFill: 120_000, saveAiKey: 60_000 }
+const READ_TIMEOUT_MS = 45_000
+const WRITE_TIMEOUT_MS = 60_000
+const WRITES = new Set(['create', 'update', 'delete', 'createEvent', 'updateEvent', 'deleteEvent', 'saveMenus', 'removeAiKey'])
+const timeoutFor = (action: string) => TIMEOUT_MS[action] ?? (WRITES.has(action) ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS)
+
 /** 같은 요청을 두 번 보내면 줄이 두 개 생길 수 있는 요청은 다시 시도하지 않는다 */
 const NO_RETRY = new Set(['create', 'createEvent'])
 
+/** 잠시 뒤 다시 보내도 되는 오류 (구글의 일시적 오류 페이지 · 연결 실패) */
 class Transient extends Error {}
+
+/** 시간이 너무 걸려 끊은 요청 — 서버는 아직 처리 중일 수 있으므로 자동으로 다시 보내지 않는다 */
+function timedOut(action: string): Error {
+  if (action === 'voiceFill') return new Error('AI 정리가 너무 오래 걸립니다. 잠시 뒤 「AI 로 정리」를 다시 눌러 주세요.')
+  if (WRITES.has(action)) {
+    return new Error('구글시트 응답이 너무 늦습니다. 저장됐을 수도 있으니 달력을 새로 고쳐 확인한 뒤 다시 시도해 주세요.')
+  }
+  return new Error('구글시트가 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.')
+}
 
 async function callSheet<T extends object = object>(
   action: string, payload: Record<string, unknown> = {},
@@ -108,7 +126,7 @@ async function callSheet<T extends object = object>(
   const retries = NO_RETRY.has(action) ? 0 : RETRY_DELAYS_MS.length
   for (let attempt = 0; ; attempt++) {
     try {
-      return await postSheet<T>(url, body)
+      return await postSheet<T>(url, body, action)
     } catch (e) {
       if (!(e instanceof Transient) || attempt >= retries) throw e
       await new Promise((r) => window.setTimeout(r, RETRY_DELAYS_MS[attempt]))
@@ -116,20 +134,17 @@ async function callSheet<T extends object = object>(
   }
 }
 
-async function postSheet<T extends object>(url: string, body: string): Promise<T> {
+async function postSheet<T extends object>(url: string, body: string, action: string): Promise<T> {
   const abort = new AbortController()
-  const timer = window.setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS)
+  const timer = window.setTimeout(() => abort.abort(), timeoutFor(action))
   let text: string
   try {
     // 본문을 문자열(text/plain)로 보내야 구글 웹 앱이 사전 확인 요청 없이 받아준다
     const res = await fetch(url, { method: 'POST', body, signal: abort.signal })
     text = await res.text()
   } catch {
-    throw new Transient(
-      abort.signal.aborted
-        ? '구글시트가 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요.'
-        : '구글시트에 연결하지 못했습니다. 인터넷 연결과, 웹 앱 액세스 권한이 "모든 사용자"인지 확인해 주세요.',
-    )
+    if (abort.signal.aborted) throw timedOut(action)
+    throw new Transient('구글시트에 연결하지 못했습니다. 인터넷 연결과, 웹 앱 액세스 권한이 "모든 사용자"인지 확인해 주세요.')
   } finally {
     window.clearTimeout(timer)
   }
