@@ -1,16 +1,13 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { timeSpan } from '../lib/date'
 import type { CareLog, EventItem, Menu, Shift } from '../lib/types'
 
 export function CareCard({
   log, actions, footer,
 }: { log: CareLog; actions?: ReactNode; footer?: ReactNode }) {
-  const time = timeSpan(log.start_time, log.end_time)
   return (
     <article className="entry care">
       <div className="entry-head">
         <span className="entry-kind">돌봄</span>
-        {time && <span className="entry-time">{time}</span>}
         {log.client_name && <span className="entry-tag">{log.client_name}</span>}
         {actions && <span className="entry-actions">{actions}</span>}
       </div>

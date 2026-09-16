@@ -430,7 +430,6 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
 }
 .c-care.flagged { border-left-color: var(--flag); }
 .c-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-bottom: 2px; font-size: .72rem; }
-.c-time { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
 .c-who { padding: 0 6px; border-radius: 6px; background: rgba(255, 255, 255, .75); color: var(--ink-soft); overflow-wrap: anywhere; }
 .c-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .c-special {
@@ -443,33 +442,6 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
 }
 .c-special b { display: block; color: var(--flag); font-size: .64rem; letter-spacing: .08em; }
 .c-special p { margin: 1px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-
-/* ─── 이 달 돌봄 시간 (월 90시간) ─────────────────────────────────────── */
-
-.care-hours {
-  --tone: var(--care);
-  display: grid;
-  gap: 8px;
-  margin: 2px 0 14px;
-  padding: 14px 16px;
-  border: 1px solid var(--rule-strong);
-  border-left: 5px solid var(--tone);
-  border-radius: var(--radius);
-  background: var(--sheet);
-}
-.care-hours.near { --tone: #b7791f; }
-.care-hours.over { --tone: var(--flag); border-color: #e9b39c; border-left-color: var(--tone); background: var(--flag-soft); }
-.ch-main { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
-.ch-label { color: var(--ink-soft); font-size: .92rem; font-weight: 700; }
-.ch-big { color: var(--tone); font-family: var(--serif); font-size: clamp(1.6rem, 5vw, 2.2rem); font-weight: 700; line-height: 1.15; }
-.ch-bar { height: 10px; overflow: hidden; border-radius: 999px; background: var(--paper-deep); }
-.ch-bar span { display: block; height: 100%; border-radius: inherit; background: var(--tone); transition: width .3s; }
-.ch-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--ink-soft); font-size: .88rem; }
-.ch-meta b { color: var(--ink); }
-.ch-warn { color: var(--flag-ink); font-weight: 700; }
-.ch-note { color: var(--ink-faint); }
-.hours-preview { margin: -4px 0 0; color: var(--care-ink); font-size: .9rem; }
-.hours-preview.over { color: var(--flag-ink); }
 
 /* 휴대폰 가로 보기 버튼 — 손가락으로 쓰는 화면에서만 */
 .cal-tools { display: none; }
@@ -826,7 +798,6 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
 .special-field textarea { border-left: 4px solid var(--flag); background: #fffaf5; }
 
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.row3 { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
 
 .help { margin: 5px 0 0; color: var(--ink-soft); font-size: .82rem; }
 .help.center { text-align: center; color: var(--ink-faint); }
@@ -957,8 +928,6 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
   .modal { width: 100%; max-height: 92dvh; border-radius: 18px 18px 0 0; }
   .modal-head, .modal-body { padding-left: 16px; padding-right: 16px; }
 
-  .row3 { grid-template-columns: 1fr 1fr; }
-  .row3 .field:first-child { grid-column: 1 / -1; }
   .palette { padding-left: 0; }
 }
 
@@ -975,8 +944,6 @@ code { font-size: .86em; background: rgba(0, 0, 0, .06); padding: 1px 5px; borde
   .masthead h1 { font-size: 1.4rem; }
   .eyebrow { display: none; }
   .controls { margin: 10px 0 8px; }
-  .care-hours { gap: 5px; margin-bottom: 8px; padding: 8px 12px; }
-  .ch-big { font-size: 1.35rem; }
   .cal-tools { margin: 0 0 6px; }
 
   .cal-head, .cal-grid { min-width: 0; }

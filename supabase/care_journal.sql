@@ -5,7 +5,7 @@
 --  (여러 번 실행해도 안전하도록 작성되어 있습니다)
 --
 --  만드는 것
---    care_logs      돌봄 일지  (날짜 · 시작 · 끝 · 대상·장소 · 한 일 · 특이사항)
+--    care_logs      돌봄 일지  (날짜 · 장소 · 한 일 · 특이사항)
 --    care_events    한 줄 일정 (날짜 · 시간 · 메뉴 · 내용)
 --    care_menus     상단 보기 메뉴 (이름 · 색)
 --    care_settings  AI 연결 키 (말로 채우기)
@@ -20,9 +20,7 @@ create table if not exists public.care_logs (
   id           uuid primary key default gen_random_uuid(),
   owner_id     uuid not null default public.current_member_id() references public.members(id) on delete cascade,
   log_date     date not null,
-  start_time   text check (start_time is null or start_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
-  end_time     text check (end_time   is null or end_time   ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
-  client_name  text,
+  client_name  text,  -- 그날 간 장소 (예전 이름 그대로 쓴다)
   work_done    text not null,
   special_note text,
   created_at   timestamptz not null default now(),

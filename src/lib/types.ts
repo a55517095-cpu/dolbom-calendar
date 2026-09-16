@@ -45,8 +45,7 @@ export type DayNote = {
 export type CareLog = {
   id: string
   log_date: string // 'YYYY-MM-DD'
-  start_time: string | null // 'HH:MM'
-  end_time: string | null
+  /** 그날 간 장소 (표의 열 이름은 예전 그대로 client_name) */
   client_name: string | null
   work_done: string
   special_note: string | null
@@ -57,14 +56,13 @@ export type CareLog = {
 /** 입력 화면에서 다루는 모양 (빈칸은 빈 문자열) */
 export type CareDraft = {
   log_date: string
-  start_time: string
-  end_time: string
+  /** 그날 간 장소 */
   client_name: string
   work_done: string
   special_note: string
 }
 
-/** 입력 칸 중 날짜를 뺀 나머지 (말로 채우기가 채우는 칸) */
+/** 입력 칸 중 날짜를 뺀 나머지 (AI 정리가 채우는 칸) */
 export type CareFields = Omit<CareDraft, 'log_date'>
 
 // 한 줄 일정 (구글시트 「일정」 탭의 한 줄) — 시간과 한 줄 글

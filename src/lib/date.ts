@@ -50,13 +50,3 @@ export function relativeDayKo(iso: string): string {
   return diff > 0 ? `${diff}일 뒤` : `${-diff}일 전`
 }
 
-/** 'HH:MM:SS' -> 'HH:MM' */
-export const hhmm = (t: string | null) => (t ? t.slice(0, 5) : '')
-
-/** '09:00–12:00', '09:00~', '~12:00' */
-export function timeSpan(start: string | null, end: string | null): string {
-  if (start && end) return `${hhmm(start)}–${hhmm(end)}`
-  if (start) return `${hhmm(start)}~`
-  if (end) return `~${hhmm(end)}`
-  return ''
-}

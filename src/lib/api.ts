@@ -89,10 +89,9 @@ function fail(error: PgError): never {
 
 export const byTime = (a: CareLog, b: CareLog) =>
   a.log_date.localeCompare(b.log_date) ||
-  (a.start_time || '99').localeCompare(b.start_time || '99') ||
   (a.created_at || '').localeCompare(b.created_at || '')
 
-const CARE_COLUMNS = 'id, log_date, start_time, end_time, client_name, work_done, special_note, created_at, updated_at'
+const CARE_COLUMNS = 'id, log_date, client_name, work_done, special_note, created_at, updated_at'
 const EVENT_COLUMNS = 'id, event_date, event_time, menu_id, body, created_at, updated_at'
 
 type EventRow = {
@@ -107,8 +106,6 @@ const toEvent = (r: EventRow): EventItem => ({
 
 const careFromDraft = (d: CareDraft) => ({
   log_date: d.log_date,
-  start_time: d.start_time || null,
-  end_time: d.end_time || null,
   client_name: d.client_name.trim() || null,
   work_done: d.work_done.trim(),
   special_note: d.special_note.trim() || null,
@@ -212,12 +209,12 @@ export async function exportCsv(): Promise<string> {
   if (events.error) fail(events.error)
   if (menus.error) fail(menus.error)
   const menuName = new Map(normalizeMenus(menus.data ?? []).map((m) => [m.id, m.name]))
-  const lines: string[] = ['﻿구분,날짜,시작,끝,대상·장소 / 메뉴,한 일 / 내용,특이사항,작성 시각,수정 시각']
+  const lines: string[] = ['﻿구분,날짜,시각,장소 / 메뉴,한 일 / 내용,특이사항,작성 시각,수정 시각']
   for (const r of (care.data ?? []) as CareLog[]) {
-    lines.push(['돌봄일지', r.log_date, r.start_time, r.end_time, r.client_name, r.work_done, r.special_note, r.created_at, r.updated_at].map(csvCell).join(','))
+    lines.push(['돌봄일지', r.log_date, '', r.client_name, r.work_done, r.special_note, r.created_at, r.updated_at].map(csvCell).join(','))
   }
   for (const r of (events.data ?? []) as EventRow[]) {
-    lines.push(['일정', r.event_date, r.event_time, '', menuName.get(r.menu_id) ?? '일정', r.body, '', r.created_at, r.updated_at].map(csvCell).join(','))
+    lines.push(['일정', r.event_date, r.event_time, menuName.get(r.menu_id) ?? '일정', r.body, '', r.created_at, r.updated_at].map(csvCell).join(','))
   }
   return lines.join('\r\n')
 }
@@ -281,8 +278,8 @@ export async function importFromSheet(url: string): Promise<ImportResult> {
     .map((r) => ({
       id: importId(r.id),
       ...careFromDraft({
-        log_date: r.log_date, start_time: r.start_time ?? '', end_time: r.end_time ?? '',
-        client_name: r.client_name ?? '', work_done: r.work_done, special_note: r.special_note ?? '',
+        log_date: r.log_date, client_name: r.client_name ?? '',
+        work_done: r.work_done, special_note: r.special_note ?? '',
       }),
       created_at: importStamp(r.created_at),
     }))

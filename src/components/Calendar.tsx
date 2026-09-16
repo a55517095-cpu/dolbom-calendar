@@ -1,6 +1,6 @@
 import { useEffect, useRef, type CSSProperties, type KeyboardEvent } from 'react'
 import { useApp } from '../state/AppContext'
-import { WEEKDAY_KO, daysInMonth, formatDateKo, timeSpan, todayISO, weekdayOf } from '../lib/date'
+import { WEEKDAY_KO, daysInMonth, formatDateKo, todayISO, weekdayOf } from '../lib/date'
 import { holidayName } from '../lib/holidays'
 import { pickVisible } from '../lib/menus'
 import type { CareLog, EventItem, Menu, Shift } from '../lib/types'
@@ -130,13 +130,11 @@ function LineInCell({ item, menu }: { item: EventItem; menu: Menu }) {
 
 /** 칸 안의 돌봄 일지 한 건 — 날짜 창의 일지 카드와 같은 내용 */
 function CareInCell({ log }: { log: CareLog }) {
-  const time = timeSpan(log.start_time, log.end_time)
   return (
     <div className={`c-care${log.special_note ? ' flagged' : ''}`}>
-      {(time || log.client_name) && (
+      {log.client_name && (
         <div className="c-meta">
-          {time && <span className="c-time">{time}</span>}
-          {log.client_name && <span className="c-who">{log.client_name}</span>}
+          <span className="c-who">{log.client_name}</span>
         </div>
       )}
       <p className="c-body">{log.work_done}</p>

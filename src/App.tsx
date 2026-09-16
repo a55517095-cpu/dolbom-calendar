@@ -5,7 +5,6 @@ import Login from './pages/Login'
 import FilterBar from './components/FilterBar'
 import Calendar from './components/Calendar'
 import MonthList from './components/MonthList'
-import CareHours from './components/CareHours'
 import DayModal, { type Compose } from './components/DayModal'
 import SettingsModal from './components/SettingsModal'
 import MenuEditor from './components/MenuEditor'
@@ -199,7 +198,6 @@ export default function App() {
       {error && <Notice kind="error">{error}</Notice>}
       {allHidden && <Notice kind="info">보기를 모두 껐습니다. 위에서 보고 싶은 메뉴를 눌러주세요.</Notice>}
 
-      {!storeMissing && <CareHours month={month} logs={careLogs} />}
 
       {/* 손가락으로 쓰는 화면(휴대폰 · 태블릿)에서만 보인다 */}
       <div className="cal-tools">

@@ -65,24 +65,24 @@ function seedCare(): CareLog[] {
   const log = (offset: number, work: string, extra: Partial<CareLog> = {}): CareLog => {
     const date = addDays(today, offset)
     return {
-      id: newId(), log_date: date, start_time: null, end_time: null, client_name: null,
+      id: newId(), log_date: date, client_name: null,
       work_done: work, special_note: null,
       created_at: `${date}T09:00:00.000Z`, updated_at: `${date}T09:00:00.000Z`,
       ...extra,
     }
   }
   return [
-    log(-13, '식사 준비 및 식사 도움, 투약 확인', { start_time: '09:00', end_time: '12:00', client_name: '○○○ 어르신 댁' }),
-    log(-11, '산책 30분, 말벗', { start_time: '14:00', end_time: '16:00' }),
-    log(-11, '저녁 식사 준비'),
+    log(-13, '책 고르는 것 도움, 독후감 숙제 봐 줌', { client_name: '문고, 중앙도서관' }),
+    log(-11, '하교 동행, 간식 챙겨 줌'),
+    log(-11, '숙제 봐 줌'),
     log(-7, '병원 동행 (정형외과)', {
-      start_time: '10:00', end_time: '13:00', client_name: '○○○ 어르신',
-      special_note: '무릎 통증 호소 — 보호자에게 전달함',
+      client_name: '○○정형외과',
+      special_note: '오른쪽 발목 통증 — 보호자에게 전달함',
     }),
-    log(-5, '청소, 빨래'),
-    log(-5, '장보기 동행'),
-    log(-5, '목욕 도움'),
-    log(-1, '식사 도움', { special_note: '식사량이 평소의 절반 정도' }),
+    log(-5, '학교 준비물 함께 챙김'),
+    log(-5, '장보기 동행', { client_name: '마트' }),
+    log(-5, '놀이터에서 놀이 지켜봄', { client_name: '놀이터' }),
+    log(-1, '간식 챙겨 줌', { special_note: '기운이 없어 보임 — 낮잠을 오래 잠' }),
   ]
 }
 
@@ -96,7 +96,7 @@ function seedEvents(): EventItem[] {
     item(-6, '09:00', '해설사 교육 (시청 2층)'),
     item(-3, '14:00', '보호자 상담 전화'),
     item(0, '18:30', '가족 저녁 모임'),
-    item(1, '10:00', '정형외과 진료 예약 (○○○ 어르신)', HOSPITAL),
+    item(1, '10:00', '정형외과 진료 예약 (동하)', HOSPITAL),
     item(3, null, '장보기 목록 확인'),
     item(8, '11:00', '치과 정기검진', HOSPITAL),
   ]
@@ -131,8 +131,6 @@ const menuStore = store('care-cal-demo-menus', seedMenus)
 
 const careFromDraft = (d: CareDraft) => ({
   log_date: d.log_date,
-  start_time: d.start_time || null,
-  end_time: d.end_time || null,
   client_name: d.client_name.trim() || null,
   work_done: d.work_done.trim(),
   special_note: d.special_note.trim() || null,

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useApp } from '../state/AppContext'
 import { friendlyError } from '../lib/api'
-import { formatDateKo, hhmm, relativeDayKo } from '../lib/date'
+import { formatDateKo, relativeDayKo } from '../lib/date'
 import { holidayName } from '../lib/holidays'
 import { EVENT, isLineMenu } from '../lib/menus'
 import type { CareDraft, CareLog, EventDraft, EventItem } from '../lib/types'
@@ -21,13 +21,11 @@ type Mode =
 type Target = { kind: 'care' | 'event'; id: string }
 
 const emptyCare = (date: string): CareDraft => ({
-  log_date: date, start_time: '', end_time: '', client_name: '', work_done: '', special_note: '',
+  log_date: date, client_name: '', work_done: '', special_note: '',
 })
 
 const draftFromLog = (log: CareLog): CareDraft => ({
   log_date: log.log_date,
-  start_time: hhmm(log.start_time),
-  end_time: hhmm(log.end_time),
   client_name: log.client_name ?? '',
   work_done: log.work_done,
   special_note: log.special_note ?? '',
@@ -123,7 +121,6 @@ export default function DayModal({
       {mode.kind === 'care' && (
         <EntryForm
           key={mode.log?.id ?? 'new-care'}
-          editingId={mode.log?.id}
           initial={mode.log ? draftFromLog(mode.log) : emptyCare(date)}
           submitLabel={mode.log ? '고친 내용 저장' : '저장'}
           onSubmit={submitCare}
